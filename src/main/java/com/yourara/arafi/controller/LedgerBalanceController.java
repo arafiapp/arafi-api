@@ -31,16 +31,16 @@ public class LedgerBalanceController {
     public ResponseEntity<?> getWalletBalance() {
         UUID appId = RequestContext.getAppId();
         if (appId == null) {
-            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized API context token."));
+            return ResponseEntity.status(401).body(new com.yourara.arafi.model.response.ErrorResponse("Unauthorized API context token."));
         }
 
         BigDecimal calculatedBalance = ledgerRepository.computeBalanceForApp(appId);
 
-        return ResponseEntity.ok(Map.of(
-                "app_id", appId,
-                "available_balance", calculatedBalance,
-                "currency", "NGN",
-                "environment_mode", RequestContext.getMode()
-        ));
+        return ResponseEntity.ok(com.yourara.arafi.model.response.WalletBalanceResponse.builder()
+                .appId(appId)
+                .availableBalance(calculatedBalance)
+                .currency("NGN")
+                .environmentMode(RequestContext.getMode())
+                .build());
     }
 }

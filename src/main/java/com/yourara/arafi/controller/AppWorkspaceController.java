@@ -27,17 +27,17 @@ public class AppWorkspaceController {
             description = "Generates dual API keys (Sandbox & Live) for developers. Requires user authentication context (JWT).",
             security = @SecurityRequirement(name = OpenApiConfig.USER_JWT_SCHEME)
     )
-    public ResponseEntity<?> createWorkspace(@RequestBody Map<String, String> request) {
+    public ResponseEntity<?> createWorkspace(@RequestBody com.yourara.arafi.model.request.CreateWorkspaceRequest request) {
         try {
             UUID userId = RequestContext.getUserId();
             if (userId == null) {
-                return ResponseEntity.status(401).body(Map.of("error", "Unauthorized user context."));
+                return ResponseEntity.status(401).body(new com.yourara.arafi.model.response.ErrorResponse("Unauthorized user context."));
             }
 
-            Map<String, Object> workspace = workspaceService.createNewAppWorkspace(userId, request.get("name"));
+            com.yourara.arafi.model.response.CreateWorkspaceResponse workspace = workspaceService.createNewAppWorkspace(userId, request.getName());
             return ResponseEntity.ok(workspace);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ResponseEntity.badRequest().body(new com.yourara.arafi.model.response.ErrorResponse(e.getMessage()));
         }
     }
 }

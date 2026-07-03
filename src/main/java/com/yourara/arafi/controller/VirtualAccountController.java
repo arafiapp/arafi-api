@@ -30,14 +30,14 @@ public class VirtualAccountController {
             description = "Creates a sandbox virtual account mapped to Nomba client services. Requires developer API key context (arafi_...).",
             security = @SecurityRequirement(name = OpenApiConfig.API_KEY_SCHEME)
     )
-    public ResponseEntity<?> createVirtualAccount(@RequestBody Map<String, String> request) {
+    public ResponseEntity<?> createVirtualAccount(@RequestBody com.yourara.arafi.model.request.CreateVirtualAccountRequest request) {
         UUID appId = RequestContext.getAppId();
         if (appId == null) {
-            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized API context. Use Bearer arafi_test_..."));
+            return ResponseEntity.status(401).body(new com.yourara.arafi.model.response.ErrorResponse("Unauthorized API context. Use Bearer arafi_test_..."));
         }
 
-        String customerRef = request.getOrDefault("customer_ref", "anon_" + UUID.randomUUID().toString().substring(0,8));
-        String accountName = request.getOrDefault("account_name", "Arafi Merchant Wallet");
+        String customerRef = request.getCustomerRef() != null ? request.getCustomerRef() : "anon_" + UUID.randomUUID().toString().substring(0,8);
+        String accountName = request.getAccountName() != null ? request.getAccountName() : "Arafi Merchant Wallet";
 
         // Request structural numbers from our client abstraction layer
         Map<String, String> nombaMeta = nombaService.provisionSandboxAccount(accountName, customerRef);
@@ -53,13 +53,13 @@ public class VirtualAccountController {
 
         vaRepository.save(va);
 
-        return ResponseEntity.ok(Map.of(
-                "id", va.getId(),
-                "bank_account_number", va.getBankAccountNumber(),
-                "bank_name", va.getBankName(),
-                "currency", va.getCurrency(),
-                "customer_ref", va.getCustomerReference(),
-                "mode", RequestContext.getMode()
-        ));
+        return ResponseEntity.ok(com.yourara.arafi.model.response.VirtualAccountResponse.builder()
+                .id(va.getId())
+                .bankAccountNumber(va.getBankAccountNumber())
+                .bankName(va.getBankName())
+                .currency(va.getCurrency())
+                .customerRef(va.getCustomerReference())
+                .mode(RequestContext.getMode())
+                .build());
     }
 }

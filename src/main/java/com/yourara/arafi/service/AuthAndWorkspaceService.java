@@ -42,7 +42,7 @@ public class AuthAndWorkspaceService {
     }
 
     // 2. HUMAN USER LOGIN (Issues stateless JWT token)
-    public String loginUser(String email, String plaintextPassword) {
+    public com.yourara.arafi.model.response.LoginResponse loginUser(String email, String plaintextPassword) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid email or password credentials."));
 
@@ -51,18 +51,21 @@ public class AuthAndWorkspaceService {
         }
 
         // Generate a 24-hour stateless session token token
-        return Jwts.builder()
+        String token = Jwts.builder()
                 .subject(user.getId().toString())
                 .claim("email", user.getEmail())
                 .issuedAt(Date.from(Instant.now()))
                 .expiration(Date.from(Instant.now().plus(24, ChronoUnit.HOURS)))
                 .signWith(Keys.hmacShaKeyFor(Base64.getDecoder().decode(jwtSecret)))
                 .compact();
+
+        long appCount = appRepository.countByUserId(user.getId());
+        return new com.yourara.arafi.model.response.LoginResponse(token, appCount);
     }
 
     // 3. WORKSPACE / APP CREATION (Generates independent Sandbox & Live API keys)
     @Transactional
-    public Map<String, Object> createNewAppWorkspace(UUID userId, String appName) {
+    public com.yourara.arafi.model.response.CreateWorkspaceResponse createNewAppWorkspace(UUID userId, String appName) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User context not found."));
 
@@ -76,14 +79,14 @@ public class AuthAndWorkspaceService {
         // Manufacture dual keyrings: One for Sandbox testing, one for Live operations
         String testKey = generateAndSaveKey(app, "test");
         String liveKey = generateAndSaveKey(app, "live");
-
-        return Map.of(
-                "app_id", app.getId(),
-                "app_name", app.getName(),
-                "status", app.getStatus(),
-                "sandbox_key", testKey,
-                "live_key", liveKey
-        );
+        
+        return com.yourara.arafi.model.response.CreateWorkspaceResponse.builder()
+                .appId(app.getId())
+                .appName(app.getName())
+                .status(app.getStatus())
+                .sandboxKey(testKey)
+                .liveKey(liveKey)
+                .build();
     }
 
     private String generateAndSaveKey(App app, String mode) {
