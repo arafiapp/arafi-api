@@ -41,7 +41,7 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/v1/auth/**", "/v1/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                        .requestMatchers("/v1/auth/**", "/v1/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/health").permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(securityInterceptorFilter, UsernamePasswordAuthenticationFilter.class);
