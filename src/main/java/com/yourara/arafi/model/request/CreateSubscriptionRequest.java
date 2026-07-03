@@ -14,4 +14,10 @@ public class CreateSubscriptionRequest {
 
     @JsonProperty("plan_id")
     private UUID planId;
+
+    @JsonProperty("nomba_token_key")
+    private String nombaTokenKey;
+
+    @JsonProperty("virtual_account_number")
+    private String virtualAccountNumber;
 }

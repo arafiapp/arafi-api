@@ -35,6 +35,7 @@ public class SubscriptionService {
     private final SubscriptionRepository subscriptionRepository;
     private final NombaClientService nombaClientService;
     private final LedgerEntryRepository ledgerEntryRepository;
+    private final ResendEmailService resendEmailService;
 
     @Transactional
     public CustomerResponse createCustomer(UUID appId, CreateCustomerRequest request) {
@@ -99,6 +100,16 @@ public class SubscriptionService {
                 .collect(Collectors.toList());
     }
 
+    private Instant calculatePeriodEnd(String billingInterval) {
+        Instant periodEnd = Instant.now().plus(30, ChronoUnit.DAYS); // default monthly renewal
+        if ("yearly".equalsIgnoreCase(billingInterval)) {
+            periodEnd = Instant.now().plus(365, ChronoUnit.DAYS);
+        } else if ("one_time".equalsIgnoreCase(billingInterval)) {
+            periodEnd = Instant.now().plus(1, ChronoUnit.DAYS);
+        }
+        return periodEnd;
+    }
+
     @Transactional
     public SubscriptionResponse createSubscription(UUID appId, CreateSubscriptionRequest request) {
         Customer customer = customerRepository.findByIdAndAppId(request.getCustomerId(), appId)
@@ -107,44 +118,64 @@ public class SubscriptionService {
         Plan plan = planRepository.findByIdAndAppId(request.getPlanId(), appId)
                 .orElseThrow(() -> new IllegalArgumentException("Billing plan context not found for this app workspace."));
 
-        // 1. Fire a charge request to Nomba client
-        String mockIdempotencyKey = UUID.randomUUID().toString();
-        Map<String, String> chargeResult = nombaClientService.charge(customer.getEmail(), plan.getAmountKobo(), mockIdempotencyKey);
+        String status = "PENDING";
+        String transactionRef = null;
+        String tokenKey = request.getNombaTokenKey();
+        String virtualAccountNumber = request.getVirtualAccountNumber();
+        Instant periodEnd = null;
 
-        if (!"success".equals(chargeResult.get("status"))) {
-            throw new IllegalStateException("Payment gateway processing failed: " + chargeResult.get("status"));
+        BigDecimal amountDecimal = BigDecimal.valueOf(plan.getAmountKobo()).divide(BigDecimal.valueOf(100)); // Convert kobo to NGN
+
+        if (tokenKey != null && !tokenKey.isBlank()) {
+            // Track 1: Tokenized Card Charge
+            Map<String, String> chargeResult = nombaClientService.chargeTokenizedCard(
+                customer.getEmail(), 
+                plan.getAmountKobo(), 
+                tokenKey, 
+                nombaClientService.getSubAccountId()
+            );
+
+            if ("success".equals(chargeResult.get("status"))) {
+                status = "ACTIVE";
+                transactionRef = chargeResult.get("transactionId");
+                periodEnd = calculatePeriodEnd(plan.getBillingInterval());
+
+                // Write corresponding CREDIT ledger transaction line
+                LedgerEntry entry = LedgerEntry.builder()
+                        .appId(appId)
+                        .bankAccountNumber("N/A (Card Payment)")
+                        .amount(amountDecimal)
+                        .entryType("CREDIT")
+                        .webhookEventId(transactionRef)
+                        .build();
+                ledgerEntryRepository.save(entry);
+
+                // Dispatch out-of-band success email notification
+                resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal, "card", "ACTIVE");
+            } else {
+                throw new IllegalStateException("Payment gateway processing failed: " + chargeResult.get("message"));
+            }
+        } else if (virtualAccountNumber != null && !virtualAccountNumber.isBlank()) {
+            // Track 2: Virtual Account Fallback (PENDING until bank transfer funded)
+            status = "PENDING";
+            // Dispatch out-of-band invoice pending notification
+            resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal, "bank_transfer", "PENDING");
+        } else {
+            throw new IllegalArgumentException("Either token_key or virtual_account_number must be provided for subscription payment setup.");
         }
 
-        String transactionRef = chargeResult.get("transactionId");
-
-        // 2. Provision and save subscription record
-        Instant periodEnd = Instant.now().plus(30, ChronoUnit.DAYS); // default monthly renewal
-        if ("yearly".equalsIgnoreCase(plan.getBillingInterval())) {
-            periodEnd = Instant.now().plus(365, ChronoUnit.DAYS);
-        } else if ("one_time".equalsIgnoreCase(plan.getBillingInterval())) {
-            periodEnd = Instant.now().plus(1, ChronoUnit.DAYS);
-        }
-
+        // Provision and save subscription record
         Subscription sub = Subscription.builder()
                 .appId(appId)
                 .customerId(customer.getId())
                 .planId(plan.getId())
-                .status("active")
+                .status(status)
                 .currentPeriodEnd(periodEnd)
+                .nombaTokenKey(tokenKey)
+                .virtualAccountNumber(virtualAccountNumber)
                 .nombaReference(transactionRef)
                 .build();
         subscriptionRepository.save(sub);
-
-        // 3. Write a corresponding CREDIT ledger transaction
-        BigDecimal chargeAmount = BigDecimal.valueOf(plan.getAmountKobo()).divide(BigDecimal.valueOf(100)); // Convert kobo to decimal NGN
-        LedgerEntry entry = LedgerEntry.builder()
-                .appId(appId)
-                .bankAccountNumber("N/A (Subscription Charge)")
-                .amount(chargeAmount)
-                .entryType("CREDIT")
-                .webhookEventId(transactionRef)
-                .build();
-        ledgerEntryRepository.save(entry);
 
         return SubscriptionResponse.builder()
                 .id(sub.getId())
@@ -153,6 +184,8 @@ public class SubscriptionService {
                 .planId(sub.getPlanId())
                 .status(sub.getStatus())
                 .currentPeriodEnd(sub.getCurrentPeriodEnd())
+                .nombaTokenKey(sub.getNombaTokenKey())
+                .virtualAccountNumber(sub.getVirtualAccountNumber())
                 .nombaReference(sub.getNombaReference())
                 .createdAt(sub.getCreatedAt())
                 .build();
@@ -167,6 +200,8 @@ public class SubscriptionService {
                         .planId(s.getPlanId())
                         .status(s.getStatus())
                         .currentPeriodEnd(s.getCurrentPeriodEnd())
+                        .nombaTokenKey(s.getNombaTokenKey())
+                        .virtualAccountNumber(s.getVirtualAccountNumber())
                         .nombaReference(s.getNombaReference())
                         .createdAt(s.getCreatedAt())
                         .build())

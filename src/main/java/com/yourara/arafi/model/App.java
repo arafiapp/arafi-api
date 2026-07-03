@@ -23,6 +23,9 @@ public class App {
     @Column(nullable = false)
     private String status; // 'active', 'suspended'
 
+    @Column(name = "webhook_url")
+    private String webhookUrl;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
