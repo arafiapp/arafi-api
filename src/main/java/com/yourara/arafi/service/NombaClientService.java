@@ -20,4 +20,13 @@ public class NombaClientService {
                 "accountRef", mockNombaRef
         );
     }
+
+    public Map<String, String> charge(String customerEmail, long amountKobo, String idempotencyKey) {
+        // Generate a mock transaction reference ID for sandbox execution
+        String mockChargeRef = "nbr_chg_" + UUID.randomUUID().toString().substring(0, 15);
+        return Map.of(
+                "status", "success",
+                "transactionId", mockChargeRef
+        );
+    }
 }
