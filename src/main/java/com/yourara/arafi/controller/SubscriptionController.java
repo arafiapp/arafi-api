@@ -63,4 +63,44 @@ public class SubscriptionController {
             return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
         }
     }
+
+    @PostMapping("/run-renewals")
+    @Operation(
+            summary = "Manually trigger subscription renewal check",
+            description = "Triggers the renewal processing worker immediately for active subscriptions past their expiration date. Requires API key authentication.",
+            security = @SecurityRequirement(name = OpenApiConfig.API_KEY_SCHEME)
+    )
+    public ResponseEntity<?> runRenewals() {
+        UUID appId = RequestContext.getAppId();
+        if (appId == null) {
+            return ResponseEntity.status(401).body(new ErrorResponse("Unauthorized API context. Use Bearer arafi_test_..."));
+        }
+
+        try {
+            subscriptionService.processSubscriptionRenewals();
+            return ResponseEntity.ok(java.util.Map.of("message", "Subscription renewals processed successfully."));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
+    @PostMapping("/run-webhooks")
+    @Operation(
+            summary = "Manually trigger pending webhook events processing",
+            description = "Triggers the webhook processing worker immediately to process received webhook events. Requires API key authentication.",
+            security = @SecurityRequirement(name = OpenApiConfig.API_KEY_SCHEME)
+    )
+    public ResponseEntity<?> runWebhooks() {
+        UUID appId = RequestContext.getAppId();
+        if (appId == null) {
+            return ResponseEntity.status(401).body(new ErrorResponse("Unauthorized API context. Use Bearer arafi_test_..."));
+        }
+
+        try {
+            subscriptionService.processReceivedWebhooks();
+            return ResponseEntity.ok(java.util.Map.of("message", "Webhook processing completed."));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
 }
