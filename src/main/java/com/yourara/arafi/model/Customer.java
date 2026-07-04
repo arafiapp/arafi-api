@@ -26,6 +26,12 @@ public class Customer {
     @Column(name = "external_ref")
     private String externalRef;
 
+    @Column(name = "nomba_token_key")
+    private String nombaTokenKey;
+
+    @Column(name = "virtual_account_number")
+    private String virtualAccountNumber;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

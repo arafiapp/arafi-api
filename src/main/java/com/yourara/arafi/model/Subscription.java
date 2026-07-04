@@ -41,6 +41,9 @@ public class Subscription {
     @Column(name = "nomba_reference")
     private String nombaReference;
 
+    @Column(name = "checkout_url", columnDefinition = "TEXT")
+    private String checkoutUrl;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

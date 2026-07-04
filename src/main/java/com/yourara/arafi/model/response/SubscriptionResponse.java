@@ -37,6 +37,9 @@ public class SubscriptionResponse {
     @JsonProperty("nomba_reference")
     private String nombaReference;
 
+    @JsonProperty("checkout_url")
+    private String checkoutUrl;
+
     @JsonProperty("created_at")
     private Instant createdAt;
 }

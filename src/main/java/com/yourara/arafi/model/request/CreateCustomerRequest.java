@@ -11,5 +11,5 @@ public class CreateCustomerRequest {
     private String email;
 
     @JsonProperty("external_ref")
-    private String externalRef;
+    private String externalRef; // id from the devs app
 }

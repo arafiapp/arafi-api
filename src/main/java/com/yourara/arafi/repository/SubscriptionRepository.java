@@ -9,4 +9,7 @@ import java.util.List;
 public interface SubscriptionRepository extends JpaRepository<Subscription, UUID> {
     Optional<Subscription> findByIdAndAppId(UUID id, UUID appId);
     List<Subscription> findByAppId(UUID appId);
+    List<Subscription> findByStatusAndCurrentPeriodEndBefore(String status, java.time.Instant dateTime);
+    java.util.Optional<Subscription> findByNombaReference(String nombaReference);
+    List<Subscription> findByVirtualAccountNumber(String virtualAccountNumber);
 }
