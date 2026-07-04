@@ -39,6 +39,79 @@ public class NombaClientService {
     @Value("${nomba.live.private.key:}")
     private String livePrivateKey;
 
+    private static class CachedToken {
+        String accessToken;
+        java.time.Instant expiresAt;
+    }
+
+    private final Map<String, CachedToken> tokenCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private String fetchFreshToken(String cacheKey) {
+        String baseUrl = "live".equalsIgnoreCase(cacheKey) ? "https://api.nomba.com" : "https://sandbox.api.nomba.com";
+        String url = baseUrl + "/v1/auth/token/issue";
+
+        String clientId = "live".equalsIgnoreCase(cacheKey) ? liveClientId : testClientId;
+        String clientSecret = "live".equalsIgnoreCase(cacheKey) ? livePrivateKey : testPrivateKey;
+
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("grant_type", "client_credentials");
+        requestBody.put("client_id", clientId);
+        requestBody.put("client_secret", clientSecret);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("accountId", parentId);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+
+        try {
+            ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
+            Map responseBody = response.getBody();
+            if (responseBody != null && "00".equals(responseBody.get("code"))) {
+                if (responseBody.get("data") instanceof Map) {
+                    Map dataMap = (Map) responseBody.get("data");
+                    if (dataMap.get("access_token") != null) {
+                        return dataMap.get("access_token").toString();
+                    }
+                }
+            }
+            String errorMsg = responseBody != null && responseBody.get("description") != null 
+                    ? responseBody.get("description").toString() 
+                    : "Unknown error issuing token";
+            throw new IllegalStateException("Failed to issue Nomba access token: " + errorMsg);
+        } catch (Exception e) {
+            if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
+                System.err.println("Failed to fetch Nomba token. Fallback to client secret direct auth: " + e.getMessage());
+                return clientSecret;
+            }
+            throw new IllegalStateException("Failed to fetch Nomba access token: " + e.getMessage(), e);
+        }
+    }
+
+    private String getAuthToken() {
+        String mode = com.yourara.arafi.security.RequestContext.getMode();
+        String cacheKey = (mode != null && "live".equalsIgnoreCase(mode)) ? "live" : "test";
+        
+        CachedToken cached = tokenCache.get(cacheKey);
+        if (cached != null && cached.expiresAt.isAfter(java.time.Instant.now().plusSeconds(300))) {
+            return cached.accessToken;
+        }
+        
+        synchronized (this) {
+            cached = tokenCache.get(cacheKey);
+            if (cached != null && cached.expiresAt.isAfter(java.time.Instant.now().plusSeconds(300))) {
+                return cached.accessToken;
+            }
+            
+            String freshToken = fetchFreshToken(cacheKey);
+            CachedToken newToken = new CachedToken();
+            newToken.accessToken = freshToken;
+            newToken.expiresAt = java.time.Instant.now().plusSeconds(3600);
+            tokenCache.put(cacheKey, newToken);
+            return freshToken;
+        }
+    }
+
     public String getSubAccountId() {
         return subAccountId;
     }
@@ -46,10 +119,10 @@ public class NombaClientService {
     private String getBaseUrl() {
         String mode = com.yourara.arafi.security.RequestContext.getMode();
         if (mode != null) {
-            return "live".equalsIgnoreCase(mode) ? "https://api.nomba.com" : "https://sandbox.nomba.com";
+            return "live".equalsIgnoreCase(mode) ? "https://api.nomba.com" : "https://sandbox.api.nomba.com";
         }
         if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
-            return "https://sandbox.nomba.com";
+            return "https://sandbox.api.nomba.com";
         }
         return "https://api.nomba.com";
     }
@@ -115,7 +188,7 @@ public class NombaClientService {
         );
 
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + getPrivateKey());
+        headers.set("Authorization", "Bearer " + getAuthToken());
         headers.set("accountId", parentId);
         headers.setContentType(MediaType.APPLICATION_JSON);
 
@@ -187,7 +260,7 @@ public class NombaClientService {
         Map<String, Object> requestBody = Map.of("order", orderMap);
 
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + getPrivateKey());
+        headers.set("Authorization", "Bearer " + getAuthToken());
         headers.set("accountId", parentId);
         headers.setContentType(MediaType.APPLICATION_JSON);
 
@@ -243,7 +316,7 @@ public class NombaClientService {
         );
 
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + getPrivateKey());
+        headers.set("Authorization", "Bearer " + getAuthToken());
         headers.set("accountId", parentId);
         headers.setContentType(MediaType.APPLICATION_JSON);
 
@@ -303,7 +376,7 @@ public class NombaClientService {
         requestBody.put("currency", "NGN");
 
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + getPrivateKey());
+        headers.set("Authorization", "Bearer " + getAuthToken());
         headers.set("accountId", parentId);
         headers.setContentType(MediaType.APPLICATION_JSON);
 
