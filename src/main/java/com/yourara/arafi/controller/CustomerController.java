@@ -63,4 +63,44 @@ public class CustomerController {
             return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
         }
     }
+
+    @DeleteMapping("/{id}/card")
+    @Operation(
+            summary = "Delete customer's vaulted payment card",
+            description = "Deletes the card token associated with the customer, preventing subsequent silent charges. Requires API key authentication.",
+            security = @SecurityRequirement(name = OpenApiConfig.API_KEY_SCHEME)
+    )
+    public ResponseEntity<?> deleteCustomerCard(@PathVariable UUID id) {
+        UUID appId = RequestContext.getAppId();
+        if (appId == null) {
+            return ResponseEntity.status(401).body(new ErrorResponse("Unauthorized API context. Use Bearer arafi_test_..."));
+        }
+
+        try {
+            subscriptionService.deleteVaultedCard(appId, id);
+            return ResponseEntity.ok(java.util.Map.of("message", "Vaulted payment method successfully removed."));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
+    @PostMapping("/{id}/card/tokenize")
+    @Operation(
+            summary = "Initialize card tokenization flow",
+            description = "Creates a checkout link to tokenize/vault a new card for the customer. Requires API key authentication.",
+            security = @SecurityRequirement(name = OpenApiConfig.API_KEY_SCHEME)
+    )
+    public ResponseEntity<?> tokenizeCard(@PathVariable UUID id) {
+        UUID appId = RequestContext.getAppId();
+        if (appId == null) {
+            return ResponseEntity.status(401).body(new ErrorResponse("Unauthorized API context. Use Bearer arafi_test_..."));
+        }
+
+        try {
+            String checkoutLink = subscriptionService.createCardTokenizationOrder(appId, id);
+            return ResponseEntity.ok(java.util.Map.of("checkout_url", checkoutLink));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
 }

@@ -26,6 +26,15 @@ public class App {
     @Column(name = "webhook_url")
     private String webhookUrl;
 
+    @Column(name = "payout_bank_account")
+    private String payoutBankAccountNumber;
+
+    @Column(name = "payout_bank_code")
+    private String payoutBankCode;
+
+    @Column(name = "payout_bank_name")
+    private String payoutBankName;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

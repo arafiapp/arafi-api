@@ -5,10 +5,12 @@ import com.yourara.arafi.model.request.CreateSubscriptionRequest;
 import com.yourara.arafi.model.response.SubscriptionResponse;
 import com.yourara.arafi.repository.*;
 import com.yourara.arafi.service.SubscriptionService;
+import com.yourara.arafi.service.PayoutService;
+import com.yourara.arafi.scheduler.PayoutProcessingScheduler;
+import com.yourara.arafi.scheduler.WebhookDispatchScheduler;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -45,6 +47,21 @@ class ArafiApiApplicationTests {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private PayoutService payoutService;
+
+    @Autowired
+    private PayoutRepository payoutRepository;
+
+    @Autowired
+    private WebhookDispatchRepository webhookDispatchRepository;
+
+    @Autowired
+    private WebhookDispatchScheduler webhookDispatchScheduler;
+
+    @Autowired
+    private PayoutProcessingScheduler payoutProcessingScheduler;
+
     @Test
     void testFullPaymentFlows() {
         // 1. Create a User (developer)
@@ -72,11 +89,12 @@ class ArafiApiApplicationTests {
                 .build();
         planRepository.save(plan);
 
-        // 4. Create a Customer (subscriber)
+        // 4. Create Customer (subscriber)
         Customer customer = Customer.builder()
                 .appId(app.getId())
                 .email("subscriber_" + UUID.randomUUID() + "@example.com")
                 .externalRef("ext_sub_001")
+                .mode("test")
                 .build();
         customerRepository.save(customer);
 
@@ -99,7 +117,7 @@ class ArafiApiApplicationTests {
 
         // Simulate incoming card checkout success webhook (payment_success)
         String orderRef = cardResp.getNombaReference();
-        String tokenKey = "nbr_tok_" + UUID.randomUUID().toString().substring(0, 10);
+        String tokenKey = "nbr_tok_fail_" + UUID.randomUUID().toString().substring(0, 6);
         
         Map<String, Object> cardPayload = Map.of(
             "requestId", "req_" + UUID.randomUUID(),
@@ -214,5 +232,216 @@ class ArafiApiApplicationTests {
         assertNotNull(renewedCardSub);
         assertEquals("EXPIRED", renewedCardSub.getStatus());
         assertNotNull(renewedCardSub.getCheckoutUrl()); // Verify a recovery checkout URL is provided in the Card failure email info!
+    }
+
+    @Test
+    void testNewSubscriptionLifecycleAndPayouts() {
+        // 1. Create User
+        User user = User.builder()
+                .email("dev_lifecycle_" + UUID.randomUUID() + "@example.com")
+                .passwordHash("hashed")
+                .build();
+        userRepository.save(user);
+
+        // 2. Create App with payout bank details
+        App app = App.builder()
+                .user(user)
+                .name("Arafi Payout App")
+                .webhookUrl("http://localhost:9999/merchant-callback")
+                .payoutBankAccountNumber("0123456789")
+                .payoutBankCode("035")
+                .payoutBankName("Wema Bank")
+                .status("active")
+                .build();
+        appRepository.save(app);
+
+        // 3. Create Plan
+        Plan plan = Plan.builder()
+                .appId(app.getId())
+                .name("Pro Plan")
+                .amountKobo(1000000L) // 10000.00 NGN
+                .billingInterval("monthly")
+                .build();
+        planRepository.save(plan);
+
+        // 4. Create Customer
+        Customer customer = Customer.builder()
+                .appId(app.getId())
+                .email("customer_lifecycle_" + UUID.randomUUID() + "@example.com")
+                .externalRef("ext_lifecycle_001")
+                .mode("test")
+                .build();
+        customerRepository.save(customer);
+
+        // Create subscription
+        CreateSubscriptionRequest req = new CreateSubscriptionRequest();
+        req.setCustomerId(customer.getId());
+        req.setPlanId(plan.getId());
+        req.setPaymentMethod("CARD");
+
+        SubscriptionResponse resp = subscriptionService.createSubscription(app.getId(), req);
+        assertNotNull(resp);
+        assertEquals("PENDING", resp.getStatus());
+
+        // Process webhook to make active
+        String tokenKey = "nbr_tok_" + UUID.randomUUID().toString().substring(0, 10);
+        Map<String, Object> cardPayload = Map.of(
+            "requestId", "req_" + UUID.randomUUID(),
+            "event_type", "payment_success",
+            "data", Map.of(
+                "orderReference", resp.getNombaReference(),
+                "tokenKey", tokenKey,
+                "amount", 10000.00
+            )
+        );
+        WebhookEvent webhook = WebhookEvent.builder()
+                .nombaEventId("req_card_lc_" + UUID.randomUUID().toString().substring(0,8))
+                .eventType("payment_success")
+                .rawPayload(cardPayload)
+                .isSignatureVerified(true)
+                .processingStatus("received")
+                .build();
+        webhookRepository.save(webhook);
+
+        subscriptionService.processReceivedWebhooks();
+
+        Subscription sub = subscriptionRepository.findById(resp.getId()).orElse(null);
+        assertNotNull(sub);
+        assertEquals("ACTIVE", sub.getStatus());
+        assertFalse(sub.getPaused());
+        assertFalse(sub.getCancelAtPeriodEnd());
+
+        // Test Pause Subscription
+        SubscriptionResponse pausedResp = subscriptionService.pauseSubscription(app.getId(), sub.getId());
+        assertEquals("PAUSED", pausedResp.getStatus());
+        assertTrue(subscriptionRepository.findById(sub.getId()).get().getPaused());
+
+        // Test Resume Subscription
+        SubscriptionResponse resumedResp = subscriptionService.resumeSubscription(app.getId(), sub.getId());
+        assertEquals("ACTIVE", resumedResp.getStatus());
+        assertFalse(subscriptionRepository.findById(sub.getId()).get().getPaused());
+
+        // Test cancel at period end
+        SubscriptionResponse cancelledPeriodEndResp = subscriptionService.cancelSubscription(app.getId(), sub.getId(), false);
+        assertTrue(cancelledPeriodEndResp.getCancelAtPeriodEnd());
+        assertEquals("ACTIVE", cancelledPeriodEndResp.getStatus());
+
+        // Move period end to past and process renewals
+        Subscription subToCancel = subscriptionRepository.findById(sub.getId()).orElse(null);
+        subToCancel.setCurrentPeriodEnd(Instant.now().minusSeconds(10));
+        subscriptionRepository.save(subToCancel);
+
+        subscriptionService.processSubscriptionRenewals();
+        assertEquals("CANCELLED", subscriptionRepository.findById(sub.getId()).get().getStatus());
+
+        // Re-activate by creating a new subscription
+        SubscriptionResponse activeResp = subscriptionService.createSubscription(app.getId(), req);
+        
+        // Mock success payment for activeResp
+        Map<String, Object> cardPayload2 = Map.of(
+            "requestId", "req_" + UUID.randomUUID(),
+            "event_type", "payment_success",
+            "data", Map.of(
+                "orderReference", activeResp.getNombaReference(),
+                "tokenKey", tokenKey,
+                "amount", 10000.00
+            )
+        );
+        WebhookEvent webhook2 = WebhookEvent.builder()
+                .nombaEventId("req_card_lc2_" + UUID.randomUUID().toString().substring(0,8))
+                .eventType("payment_success")
+                .rawPayload(cardPayload2)
+                .isSignatureVerified(true)
+                .processingStatus("received")
+                .build();
+        webhookRepository.save(webhook2);
+        subscriptionService.processReceivedWebhooks();
+
+        Subscription activeSub = subscriptionRepository.findById(activeResp.getId()).orElse(null);
+        assertEquals("ACTIVE", activeSub.getStatus());
+
+        // Test Plan Upgrade (Change Plan)
+        Plan plan2 = Plan.builder()
+                .appId(app.getId())
+                .name("Enterprise Plan")
+                .amountKobo(2500000L) // 25000.00 NGN
+                .billingInterval("monthly")
+                .build();
+        planRepository.save(plan2);
+
+        SubscriptionResponse upgradeResp = subscriptionService.changePlan(app.getId(), activeSub.getId(), plan2.getId());
+        assertNotNull(upgradeResp);
+        assertEquals("ACTIVE", upgradeResp.getStatus());
+        assertEquals(plan2.getId(), upgradeResp.getPlanId());
+
+        // Outbox assertions
+        List<WebhookDispatch> dispatches = webhookDispatchRepository.findAll();
+        assertFalse(dispatches.isEmpty());
+
+        // Process Outbox
+        webhookDispatchScheduler.processPendingWebhooks();
+
+        // Payout Tests
+        BigDecimal currentBalance = ledgerEntryRepository.computeBalanceForApp(app.getId());
+        assertTrue(currentBalance.compareTo(BigDecimal.ZERO) > 0);
+
+        // Request Payout
+        BigDecimal payoutAmount = new BigDecimal("5000.00");
+        Payout payout = payoutService.requestPayout(app.getId(), payoutAmount, null, null, null);
+        assertNotNull(payout);
+        assertEquals("PENDING", payout.getStatus());
+
+        // Verify balance debited
+        BigDecimal balanceAfterPayout = ledgerEntryRepository.computeBalanceForApp(app.getId());
+        assertEquals(0, currentBalance.subtract(payoutAmount).compareTo(balanceAfterPayout));
+
+        // Process payout
+        payoutProcessingScheduler.processPendingPayouts();
+        assertEquals("SUCCESS", payoutRepository.findById(payout.getId()).get().getStatus());
+
+        // Test Payout failure rollback
+        // Credit workspace to ensure enough balance
+        LedgerEntry entry = LedgerEntry.builder()
+                .appId(app.getId())
+                .bankAccountNumber("N/A")
+                .amount(new BigDecimal("10000.00"))
+                .entryType("CREDIT")
+                .build();
+        ledgerEntryRepository.save(entry);
+
+        BigDecimal balanceBeforeFail = ledgerEntryRepository.computeBalanceForApp(app.getId());
+        // Set mode to live to force processTransfer to fail in test context
+        Payout failedPayout = Payout.builder()
+                .appId(app.getId())
+                .amount(new BigDecimal("8000.00"))
+                .bankAccountNumber("123456")
+                .bankCode("999")
+                .status("PENDING")
+                .mode("live") // Forces failure
+                .build();
+        payoutRepository.save(failedPayout);
+
+        // Debit ledger to match requested payout
+        LedgerEntry debitEntry = LedgerEntry.builder()
+                .appId(app.getId())
+                .bankAccountNumber("123456")
+                .amount(new BigDecimal("-8000.00"))
+                .entryType("DEBIT")
+                .webhookEventId("payout_" + failedPayout.getId())
+                .build();
+        ledgerEntryRepository.save(debitEntry);
+
+        // Process failed payout
+        payoutProcessingScheduler.processPendingPayouts();
+        assertEquals("FAILED", payoutRepository.findById(failedPayout.getId()).get().getStatus());
+
+        // Verify refund credit was posted and balance is restored
+        BigDecimal balanceAfterFail = ledgerEntryRepository.computeBalanceForApp(app.getId());
+        assertEquals(0, balanceBeforeFail.compareTo(balanceAfterFail));
+
+        // Test customer card deletion
+        subscriptionService.deleteVaultedCard(app.getId(), customer.getId());
+        Customer updatedCust = customerRepository.findById(customer.getId()).get();
+        assertNull(updatedCust.getNombaTokenKey());
     }
 }
