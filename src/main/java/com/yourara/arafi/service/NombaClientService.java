@@ -64,6 +64,7 @@ public class NombaClientService {
         String mockNombaRef = "nbr_" + UUID.randomUUID().toString().substring(0, 15);
 
         return Map.of(
+                "status", "success",
                 "bankAccountNumber", mockAccountNumber,
                 "bankName", "WEMA Bank (Nomba Sandbox)",
                 "accountRef", mockNombaRef);
@@ -133,6 +134,125 @@ public class NombaClientService {
                 );
             }
         } catch (Exception e) {
+            return Map.of(
+                "status", "failed",
+                "message", e.getMessage()
+            );
+        }
+    }
+
+    public Map<String, String> createCheckoutOrder(String orderReference, long amountKobo, String customerEmail, String callbackUrl) {
+        String baseUrl = getBaseUrl();
+        String url = baseUrl + "/v1/checkout/order";
+
+        Map<String, Object> orderMap = new HashMap<>();
+        orderMap.put("orderReference", orderReference);
+        orderMap.put("amount", String.format("%.2f", (double) amountKobo / 100)); // Decimal format string (e.g. "5000.00")
+        orderMap.put("currency", "NGN");
+        orderMap.put("customerId", customerEmail);
+        orderMap.put("callbackUrl", callbackUrl);
+        orderMap.put("tokenizeCard", true);
+
+        Map<String, Object> requestBody = Map.of("order", orderMap);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "Bearer " + getPrivateKey());
+        headers.set("accountId", parentId);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+
+        try {
+            ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
+            Map responseBody = response.getBody();
+            if (responseBody != null && "00".equals(responseBody.get("code"))) {
+                String checkoutLink = null;
+                if (responseBody.get("data") instanceof Map) {
+                    Map dataMap = (Map) responseBody.get("data");
+                    if (dataMap.get("checkoutLink") != null) {
+                        checkoutLink = dataMap.get("checkoutLink").toString();
+                    }
+                }
+                if (checkoutLink != null) {
+                    return Map.of(
+                        "status", "success",
+                        "checkoutLink", checkoutLink
+                    );
+                }
+            }
+            String errorMsg = responseBody != null && responseBody.get("description") != null 
+                    ? responseBody.get("description").toString() 
+                    : "Nomba checkout order creation failed";
+            return Map.of(
+                "status", "failed",
+                "message", errorMsg
+            );
+        } catch (Exception e) {
+            if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
+                return Map.of(
+                    "status", "success",
+                    "checkoutLink", "https://sandbox.nomba.com/checkout/" + orderReference
+                );
+            }
+            return Map.of(
+                "status", "failed",
+                "message", e.getMessage()
+            );
+        }
+    }
+
+    public Map<String, String> createVirtualAccount(String accountRef, String accountName) {
+        String baseUrl = getBaseUrl();
+        String url = baseUrl + "/v1/accounts/virtual";
+
+        Map<String, Object> requestBody = Map.of(
+            "accountRef", accountRef,
+            "accountName", accountName,
+            "currency", "NGN"
+        );
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "Bearer " + getPrivateKey());
+        headers.set("accountId", parentId);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+
+        try {
+            ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
+            Map responseBody = response.getBody();
+            if (responseBody != null && "00".equals(responseBody.get("code"))) {
+                String bankAccountNumber = null;
+                String bankName = null;
+                if (responseBody.get("data") instanceof Map) {
+                    Map dataMap = (Map) responseBody.get("data");
+                    if (dataMap.get("accountNumber") != null) {
+                        bankAccountNumber = dataMap.get("accountNumber").toString();
+                    }
+                    if (dataMap.get("bankName") != null) {
+                        bankName = dataMap.get("bankName").toString();
+                    }
+                }
+                if (bankAccountNumber != null) {
+                    return Map.of(
+                        "status", "success",
+                        "bankAccountNumber", bankAccountNumber,
+                        "bankName", bankName != null ? bankName : "Nomba Bank",
+                        "accountRef", accountRef
+                    );
+                }
+            }
+            String errorMsg = responseBody != null && responseBody.get("description") != null 
+                    ? responseBody.get("description").toString() 
+                    : "Nomba virtual account creation failed";
+            return Map.of(
+                "status", "failed",
+                "message", errorMsg
+            );
+        } catch (Exception e) {
+            if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
+                return provisionSandboxAccount(accountName, accountRef);
+            }
             return Map.of(
                 "status", "failed",
                 "message", e.getMessage()
