@@ -40,6 +40,11 @@ public class SubscriptionResponse {
     @JsonProperty("checkout_url")
     private String checkoutUrl;
 
+    @JsonProperty("cancel_at_period_end")
+    private Boolean cancelAtPeriodEnd;
+
+    private Boolean paused;
+
     @JsonProperty("created_at")
     private Instant createdAt;
 }

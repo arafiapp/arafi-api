@@ -32,6 +32,9 @@ public class Customer {
     @Column(name = "virtual_account_number")
     private String virtualAccountNumber;
 
+    @Column(name = "mode", nullable = false)
+    private String mode; // "test" or "live"
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

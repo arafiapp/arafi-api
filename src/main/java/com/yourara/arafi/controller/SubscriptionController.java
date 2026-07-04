@@ -103,4 +103,91 @@ public class SubscriptionController {
             return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
         }
     }
+
+    @DeleteMapping("/{id}/cancel")
+    @Operation(
+            summary = "Cancel a subscription",
+            description = "Cancels a subscription immediately or at the end of the billing period. Requires API key authentication.",
+            security = @SecurityRequirement(name = OpenApiConfig.API_KEY_SCHEME)
+    )
+    public ResponseEntity<?> cancelSubscription(
+            @PathVariable UUID id,
+            @RequestParam(defaultValue = "false") boolean immediately
+    ) {
+        UUID appId = RequestContext.getAppId();
+        if (appId == null) {
+            return ResponseEntity.status(401).body(new ErrorResponse("Unauthorized API context. Use Bearer arafi_test_..."));
+        }
+        try {
+            SubscriptionResponse subscription = subscriptionService.cancelSubscription(appId, id, immediately);
+            return ResponseEntity.ok(subscription);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
+    @PostMapping("/{id}/pause")
+    @Operation(
+            summary = "Pause a subscription",
+            description = "Pauses subscription access and billing immediately. Requires API key authentication.",
+            security = @SecurityRequirement(name = OpenApiConfig.API_KEY_SCHEME)
+    )
+    public ResponseEntity<?> pauseSubscription(@PathVariable UUID id) {
+        UUID appId = RequestContext.getAppId();
+        if (appId == null) {
+            return ResponseEntity.status(401).body(new ErrorResponse("Unauthorized API context. Use Bearer arafi_test_..."));
+        }
+        try {
+            SubscriptionResponse subscription = subscriptionService.pauseSubscription(appId, id);
+            return ResponseEntity.ok(subscription);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
+    @PostMapping("/{id}/resume")
+    @Operation(
+            summary = "Resume a subscription",
+            description = "Resumes subscription access and charges immediately if expired. Requires API key authentication.",
+            security = @SecurityRequirement(name = OpenApiConfig.API_KEY_SCHEME)
+    )
+    public ResponseEntity<?> resumeSubscription(@PathVariable UUID id) {
+        UUID appId = RequestContext.getAppId();
+        if (appId == null) {
+            return ResponseEntity.status(401).body(new ErrorResponse("Unauthorized API context. Use Bearer arafi_test_..."));
+        }
+        try {
+            SubscriptionResponse subscription = subscriptionService.resumeSubscription(appId, id);
+            return ResponseEntity.ok(subscription);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
+    @PutMapping("/{id}/plan")
+    @Operation(
+            summary = "Upgrade or downgrade a subscription's plan",
+            description = "Changes the plan of the subscription, calculating prorated credits and charging/refunding the difference. Requires API key authentication.",
+            security = @SecurityRequirement(name = OpenApiConfig.API_KEY_SCHEME)
+    )
+    public ResponseEntity<?> changePlan(
+            @PathVariable UUID id,
+            @RequestBody java.util.Map<String, String> payload
+    ) {
+        UUID appId = RequestContext.getAppId();
+        if (appId == null) {
+            return ResponseEntity.status(401).body(new ErrorResponse("Unauthorized API context. Use Bearer arafi_test_..."));
+        }
+        try {
+            String planIdStr = payload.get("planId");
+            if (planIdStr == null || planIdStr.isBlank()) {
+                return ResponseEntity.badRequest().body(new ErrorResponse("Missing required 'planId' parameter."));
+            }
+            UUID newPlanId = UUID.fromString(planIdStr);
+            SubscriptionResponse subscription = subscriptionService.changePlan(appId, id, newPlanId);
+            return ResponseEntity.ok(subscription);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
 }

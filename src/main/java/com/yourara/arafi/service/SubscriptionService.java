@@ -7,6 +7,7 @@ import com.yourara.arafi.repository.SubscriptionRepository;
 import com.yourara.arafi.repository.LedgerEntryRepository;
 import com.yourara.arafi.repository.AppRepository;
 import com.yourara.arafi.repository.WebhookRepository;
+import com.yourara.arafi.repository.WebhookDispatchRepository;
 import org.springframework.web.client.RestTemplate;
 import com.yourara.arafi.model.request.CreateCustomerRequest;
 import com.yourara.arafi.model.request.CreatePlanRequest;
@@ -40,16 +41,21 @@ public class SubscriptionService {
     private final AppRepository appRepository;
     private final RestTemplate restTemplate;
     private final WebhookRepository webhookRepository;
+    private final WebhookDispatchRepository webhookDispatchRepository;
 
     @Value("${nomba.callback.url:https://arafi-api.onrender.com/v1/checkout/callback}")
     private String nombaCallbackUrl;
 
     @Transactional
     public CustomerResponse createCustomer(UUID appId, CreateCustomerRequest request) {
+        String mode = com.yourara.arafi.security.RequestContext.getMode() != null 
+                ? com.yourara.arafi.security.RequestContext.getMode() 
+                : "test";
         Customer customer = Customer.builder()
                 .appId(appId)
                 .email(request.getEmail())
                 .externalRef(request.getExternalRef())
+                .mode(mode)
                 .build();
         customerRepository.save(customer);
 
@@ -212,6 +218,9 @@ public class SubscriptionService {
             throw new IllegalArgumentException("Invalid payment method. Expected 'CARD' or 'BANK_TRANSFER'.");
         }
 
+        String mode = com.yourara.arafi.security.RequestContext.getMode() != null 
+                ? com.yourara.arafi.security.RequestContext.getMode() 
+                : "test";
         // Provision and save subscription record
         Subscription sub = Subscription.builder()
                 .appId(appId)
@@ -219,10 +228,11 @@ public class SubscriptionService {
                 .planId(plan.getId())
                 .status(status)
                 .currentPeriodEnd(periodEnd)
-                .nombaTokenKey(tokenKey)
+                .nombaTokenKey("CARD".equalsIgnoreCase(paymentMethod) ? tokenKey : null)
                 .virtualAccountNumber(virtualAccountNumber)
                 .nombaReference(transactionRef)
                 .checkoutUrl(checkoutUrl)
+                .mode(mode)
                 .build();
 
         if ("CARD".equalsIgnoreCase(paymentMethod) && (tokenKey == null || tokenKey.isBlank()) && transactionRef != null) {
@@ -234,35 +244,12 @@ public class SubscriptionService {
         }
         subscriptionRepository.save(sub);
 
-        return SubscriptionResponse.builder()
-                .id(sub.getId())
-                .appId(sub.getAppId())
-                .customerId(sub.getCustomerId())
-                .planId(sub.getPlanId())
-                .status(sub.getStatus())
-                .currentPeriodEnd(sub.getCurrentPeriodEnd())
-                .nombaTokenKey(sub.getNombaTokenKey())
-                .virtualAccountNumber(sub.getVirtualAccountNumber())
-                .nombaReference(sub.getNombaReference())
-                .checkoutUrl(sub.getCheckoutUrl())
-                .createdAt(sub.getCreatedAt())
-                .build();
+        return mapToResponse(sub);
     }
 
     public List<SubscriptionResponse> getSubscriptions(UUID appId) {
         return subscriptionRepository.findByAppId(appId).stream()
-                .map(s -> SubscriptionResponse.builder()
-                        .id(s.getId())
-                        .appId(s.getAppId())
-                        .customerId(s.getCustomerId())
-                        .planId(s.getPlanId())
-                        .status(s.getStatus())
-                        .currentPeriodEnd(s.getCurrentPeriodEnd())
-                        .nombaTokenKey(s.getNombaTokenKey())
-                        .virtualAccountNumber(s.getVirtualAccountNumber())
-                        .nombaReference(s.getNombaReference())
-                        .createdAt(s.getCreatedAt())
-                        .build())
+                .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }
 
@@ -273,6 +260,33 @@ public class SubscriptionService {
         
         for (Subscription sub : expiredSubscriptions) {
             try {
+                com.yourara.arafi.security.RequestContext.setContext(sub.getAppId(), sub.getMode());
+                
+                if (Boolean.TRUE.equals(sub.getPaused())) {
+                    continue;
+                }
+                
+                if (Boolean.TRUE.equals(sub.getCancelAtPeriodEnd())) {
+                    sub.setStatus("CANCELLED");
+                    subscriptionRepository.save(sub);
+                    
+                    Customer customer = customerRepository.findById(sub.getCustomerId()).orElse(null);
+                    if (customer != null) {
+                        BigDecimal planAmt = planRepository.findById(sub.getPlanId())
+                                .map(p -> BigDecimal.valueOf(p.getAmountKobo()).divide(BigDecimal.valueOf(100)))
+                                .orElse(BigDecimal.ZERO);
+                        resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(), planAmt, "system (Cancelled at period end)", "CANCELLED");
+                    }
+                    
+                    appRepository.findById(sub.getAppId()).ifPresent(app -> {
+                        if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
+                            triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(), sub.getCustomerId(), sub.getPlanId(), null, "CANCELLED", "cancel_at_period_end_fired");
+                        }
+                    });
+                    System.out.println("Subscription cancelled at period end: " + sub.getId());
+                    continue;
+                }
+
                 Customer customer = customerRepository.findById(sub.getCustomerId()).orElse(null);
                 Plan plan = planRepository.findById(sub.getPlanId()).orElse(null);
                 
@@ -354,6 +368,8 @@ public class SubscriptionService {
                 }
             } catch (Exception e) {
                 System.err.println("Error renewing subscription: " + sub.getId() + ", " + e.getMessage());
+            } finally {
+                com.yourara.arafi.security.RequestContext.clear();
             }
         }
     }
@@ -440,38 +456,43 @@ public class SubscriptionService {
         }
 
         if (foundSubscription != null) {
-            final Subscription subscription = foundSubscription;
-            Customer customer = customerRepository.findById(subscription.getCustomerId()).orElse(null);
-            if (customer != null) {
-                customer.setNombaTokenKey(tokenKey);
-                customerRepository.save(customer);
-            }
-
-            subscription.setStatus("ACTIVE");
-            subscription.setNombaTokenKey(tokenKey);
-            subscription.setNombaReference(transactionId);
-            subscription.setCurrentPeriodEnd(calculatePeriodEnd(planRepository.findById(subscription.getPlanId()).map(Plan::getBillingInterval).orElse("monthly")));
-            subscriptionRepository.save(subscription);
-
-            LedgerEntry entry = LedgerEntry.builder()
-                    .appId(subscription.getAppId())
-                    .bankAccountNumber("N/A (Card Payment)")
-                    .amount(amount)
-                    .entryType("CREDIT")
-                    .webhookEventId(transactionId)
-                    .build();
-            ledgerEntryRepository.save(entry);
-
-            appRepository.findById(subscription.getAppId()).ifPresent(app -> {
-                if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                    triggerMerchantCallback(app.getWebhookUrl(), subscription.getId(), subscription.getAppId(), subscription.getCustomerId(), subscription.getPlanId(), amount, "ACTIVE", null);
+            try {
+                com.yourara.arafi.security.RequestContext.setContext(foundSubscription.getAppId(), foundSubscription.getMode());
+                final Subscription subscription = foundSubscription;
+                Customer customer = customerRepository.findById(subscription.getCustomerId()).orElse(null);
+                if (customer != null) {
+                    customer.setNombaTokenKey(tokenKey);
+                    customerRepository.save(customer);
                 }
-            });
 
-            if (customer != null) {
-                resendEmailService.sendBillingAlert(subscription.getAppId(), customer.getEmail(), customer.getEmail(), amount, "card", "ACTIVE");
+                subscription.setStatus("ACTIVE");
+                subscription.setNombaTokenKey(tokenKey);
+                subscription.setNombaReference(transactionId);
+                subscription.setCurrentPeriodEnd(calculatePeriodEnd(planRepository.findById(subscription.getPlanId()).map(Plan::getBillingInterval).orElse("monthly")));
+                subscriptionRepository.save(subscription);
+
+                LedgerEntry entry = LedgerEntry.builder()
+                        .appId(subscription.getAppId())
+                        .bankAccountNumber("N/A (Card Payment)")
+                        .amount(amount)
+                        .entryType("CREDIT")
+                        .webhookEventId(transactionId)
+                        .build();
+                ledgerEntryRepository.save(entry);
+
+                appRepository.findById(subscription.getAppId()).ifPresent(app -> {
+                    if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
+                        triggerMerchantCallback(app.getWebhookUrl(), subscription.getId(), subscription.getAppId(), subscription.getCustomerId(), subscription.getPlanId(), amount, "ACTIVE", null);
+                    }
+                });
+
+                if (customer != null) {
+                    resendEmailService.sendBillingAlert(subscription.getAppId(), customer.getEmail(), customer.getEmail(), amount, "card", "ACTIVE");
+                }
+                System.out.println("Card payment processed and vaulted successfully for subscription: " + subscription.getId());
+            } finally {
+                com.yourara.arafi.security.RequestContext.clear();
             }
-            System.out.println("Card payment processed and vaulted successfully for subscription: " + subscription.getId());
         } else {
             throw new IllegalArgumentException("No subscription found matching order reference: " + orderReference);
         }
@@ -488,45 +509,50 @@ public class SubscriptionService {
                 .findFirst()
                 .orElse(subscriptions.get(0));
 
-        subscription.setStatus("ACTIVE");
-        
-        Instant baseTime = Instant.now();
-        if (subscription.getCurrentPeriodEnd() != null && subscription.getCurrentPeriodEnd().isAfter(Instant.now())) {
-            baseTime = subscription.getCurrentPeriodEnd();
-        }
-        
-        Plan plan = planRepository.findById(subscription.getPlanId()).orElse(null);
-        String interval = plan != null ? plan.getBillingInterval() : "monthly";
-        Instant periodEnd = baseTime.plus(30, ChronoUnit.DAYS);
-        if ("yearly".equalsIgnoreCase(interval)) {
-            periodEnd = baseTime.plus(365, ChronoUnit.DAYS);
-        } else if ("one_time".equalsIgnoreCase(interval)) {
-            periodEnd = baseTime.plus(1, ChronoUnit.DAYS);
-        }
-        
-        subscription.setCurrentPeriodEnd(periodEnd);
-        subscription.setNombaReference(transactionId);
-        subscriptionRepository.save(subscription);
-
-        LedgerEntry entry = LedgerEntry.builder()
-                .appId(subscription.getAppId())
-                .bankAccountNumber(virtualAccountNumber)
-                .amount(amount)
-                .entryType("CREDIT")
-                .webhookEventId(transactionId)
-                .build();
-        ledgerEntryRepository.save(entry);
-
-        appRepository.findById(subscription.getAppId()).ifPresent(app -> {
-            if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                triggerMerchantCallback(app.getWebhookUrl(), subscription.getId(), subscription.getAppId(), subscription.getCustomerId(), subscription.getPlanId(), amount, "ACTIVE", null);
+        try {
+            com.yourara.arafi.security.RequestContext.setContext(subscription.getAppId(), subscription.getMode());
+            subscription.setStatus("ACTIVE");
+            
+            Instant baseTime = Instant.now();
+            if (subscription.getCurrentPeriodEnd() != null && subscription.getCurrentPeriodEnd().isAfter(Instant.now())) {
+                baseTime = subscription.getCurrentPeriodEnd();
             }
-        });
+            
+            Plan plan = planRepository.findById(subscription.getPlanId()).orElse(null);
+            String interval = plan != null ? plan.getBillingInterval() : "monthly";
+            Instant periodEnd = baseTime.plus(30, ChronoUnit.DAYS);
+            if ("yearly".equalsIgnoreCase(interval)) {
+                periodEnd = baseTime.plus(365, ChronoUnit.DAYS);
+            } else if ("one_time".equalsIgnoreCase(interval)) {
+                periodEnd = baseTime.plus(1, ChronoUnit.DAYS);
+            }
+            
+            subscription.setCurrentPeriodEnd(periodEnd);
+            subscription.setNombaReference(transactionId);
+            subscriptionRepository.save(subscription);
 
-        customerRepository.findById(subscription.getCustomerId()).ifPresent(customer -> {
-            resendEmailService.sendBillingAlert(subscription.getAppId(), customer.getEmail(), customer.getEmail(), amount, "bank_transfer", "ACTIVE");
-        });
-        System.out.println("Virtual account payment processed successfully for subscription: " + subscription.getId());
+            LedgerEntry entry = LedgerEntry.builder()
+                    .appId(subscription.getAppId())
+                    .bankAccountNumber(virtualAccountNumber)
+                    .amount(amount)
+                    .entryType("CREDIT")
+                    .webhookEventId(transactionId)
+                    .build();
+            ledgerEntryRepository.save(entry);
+
+            appRepository.findById(subscription.getAppId()).ifPresent(app -> {
+                if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
+                    triggerMerchantCallback(app.getWebhookUrl(), subscription.getId(), subscription.getAppId(), subscription.getCustomerId(), subscription.getPlanId(), amount, "ACTIVE", null);
+                }
+            });
+
+            customerRepository.findById(subscription.getCustomerId()).ifPresent(customer -> {
+                resendEmailService.sendBillingAlert(subscription.getAppId(), customer.getEmail(), customer.getEmail(), amount, "bank_transfer", "ACTIVE");
+            });
+            System.out.println("Virtual account payment processed successfully for subscription: " + subscription.getId());
+        } finally {
+            com.yourara.arafi.security.RequestContext.clear();
+        }
     }
 
     private void triggerMerchantCallback(String webhookUrl, UUID subscriptionId, UUID appId, UUID customerId, UUID planId, BigDecimal amount, String status, String reason) {
@@ -544,14 +570,316 @@ public class SubscriptionService {
                 dataMap.put("reason", reason);
             }
 
+            String eventType = "ACTIVE".equalsIgnoreCase(status) ? "subscription.active" : "subscription.expired";
             Map<String, Object> payload = Map.of(
-                "event", "ACTIVE".equalsIgnoreCase(status) ? "subscription.active" : "subscription.expired",
+                "event", eventType,
                 "data", dataMap
             );
-            restTemplate.postForEntity(webhookUrl, payload, String.class);
-            System.out.println("Successfully triggered merchant callback webhook to: " + webhookUrl);
+
+            WebhookDispatch dispatch = WebhookDispatch.builder()
+                    .appId(appId)
+                    .webhookUrl(webhookUrl)
+                    .eventType(eventType)
+                    .payload(payload)
+                    .status("PENDING")
+                    .attempts(0)
+                    .nextAttemptAt(Instant.now())
+                    .build();
+
+            webhookDispatchRepository.save(dispatch);
+            System.out.println("Queued merchant webhook callback to outbox for app: " + appId + ", event: " + eventType);
         } catch (Exception e) {
-            System.err.println("Failed to dispatch merchant callback webhook to " + webhookUrl + ": " + e.getMessage());
+            System.err.println("Failed to queue merchant callback webhook to " + webhookUrl + ": " + e.getMessage());
         }
+    }
+
+    @Transactional
+    public SubscriptionResponse cancelSubscription(UUID appId, UUID subscriptionId, boolean immediately) {
+        Subscription sub = subscriptionRepository.findByIdAndAppId(subscriptionId, appId)
+                .orElseThrow(() -> new IllegalArgumentException("Subscription not found in this app workspace."));
+
+        if (immediately) {
+            sub.setStatus("CANCELLED");
+            sub.setCurrentPeriodEnd(Instant.now());
+        } else {
+            sub.setCancelAtPeriodEnd(true);
+        }
+        subscriptionRepository.save(sub);
+
+        if (immediately) {
+            Customer customer = customerRepository.findById(sub.getCustomerId()).orElse(null);
+            if (customer != null) {
+                resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), BigDecimal.ZERO, "card/bank", "CANCELLED");
+            }
+            appRepository.findById(appId).ifPresent(app -> {
+                if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
+                    triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(), sub.getPlanId(), null, "CANCELLED", "user_cancelled");
+                }
+            });
+        }
+
+        return mapToResponse(sub);
+    }
+
+    @Transactional
+    public SubscriptionResponse pauseSubscription(UUID appId, UUID subscriptionId) {
+        Subscription sub = subscriptionRepository.findByIdAndAppId(subscriptionId, appId)
+                .orElseThrow(() -> new IllegalArgumentException("Subscription not found in this app workspace."));
+
+        sub.setPaused(true);
+        sub.setStatus("PAUSED");
+        subscriptionRepository.save(sub);
+
+        appRepository.findById(appId).ifPresent(app -> {
+            if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
+                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(), sub.getPlanId(), null, "PAUSED", "subscription_paused");
+            }
+        });
+
+        return mapToResponse(sub);
+    }
+
+    @Transactional
+    public SubscriptionResponse resumeSubscription(UUID appId, UUID subscriptionId) {
+        Subscription sub = subscriptionRepository.findByIdAndAppId(subscriptionId, appId)
+                .orElseThrow(() -> new IllegalArgumentException("Subscription not found in this app workspace."));
+
+        sub.setPaused(false);
+        
+        Customer customer = customerRepository.findById(sub.getCustomerId())
+                .orElseThrow(() -> new IllegalStateException("Customer profile not found."));
+        Plan plan = planRepository.findById(sub.getPlanId())
+                .orElseThrow(() -> new IllegalStateException("Billing plan not found."));
+
+        if (sub.getCurrentPeriodEnd() != null && sub.getCurrentPeriodEnd().isAfter(Instant.now())) {
+            sub.setStatus("ACTIVE");
+            subscriptionRepository.save(sub);
+        } else {
+            BigDecimal amountDecimal = BigDecimal.valueOf(plan.getAmountKobo()).divide(BigDecimal.valueOf(100));
+            boolean isCard = sub.getNombaTokenKey() != null && !sub.getNombaTokenKey().isBlank();
+            if (isCard) {
+                Map<String, String> chargeResult = nombaClientService.chargeTokenizedCard(
+                        customer.getEmail(),
+                        plan.getAmountKobo(),
+                        sub.getNombaTokenKey(),
+                        nombaClientService.getSubAccountId()
+                );
+                
+                if ("success".equals(chargeResult.get("status"))) {
+                    sub.setStatus("ACTIVE");
+                    sub.setCurrentPeriodEnd(calculatePeriodEnd(plan.getBillingInterval()));
+                    sub.setNombaReference(chargeResult.get("transactionId"));
+                    subscriptionRepository.save(sub);
+                    
+                    LedgerEntry entry = LedgerEntry.builder()
+                            .appId(appId)
+                            .bankAccountNumber("N/A (Card Payment)")
+                            .amount(amountDecimal)
+                            .entryType("CREDIT")
+                            .webhookEventId(chargeResult.get("transactionId"))
+                            .build();
+                    ledgerEntryRepository.save(entry);
+                    
+                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal, "card", "ACTIVE");
+                } else {
+                    sub.setStatus("EXPIRED");
+                    subscriptionRepository.save(sub);
+                    throw new IllegalStateException("Failed to charge vaulted card for resuming subscription: " + chargeResult.get("message"));
+                }
+            } else {
+                sub.setStatus("PENDING");
+                subscriptionRepository.save(sub);
+                resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal, "bank_transfer", "PENDING");
+            }
+        }
+
+        return mapToResponse(sub);
+    }
+
+    @Transactional
+    public SubscriptionResponse changePlan(UUID appId, UUID subscriptionId, UUID newPlanId) {
+        Subscription sub = subscriptionRepository.findByIdAndAppId(subscriptionId, appId)
+                .orElseThrow(() -> new IllegalArgumentException("Subscription not found in this app workspace."));
+
+        Plan oldPlan = planRepository.findByIdAndAppId(sub.getPlanId(), appId)
+                .orElseThrow(() -> new IllegalStateException("Current plan details not found."));
+
+        Plan newPlan = planRepository.findByIdAndAppId(newPlanId, appId)
+                .orElseThrow(() -> new IllegalArgumentException("New billing plan not found in this app workspace."));
+
+        if (sub.getPlanId().equals(newPlanId)) {
+            return mapToResponse(sub);
+        }
+
+        Customer customer = customerRepository.findById(sub.getCustomerId())
+                .orElseThrow(() -> new IllegalStateException("Customer context not found."));
+
+        long creditKobo = 0;
+        if ("ACTIVE".equalsIgnoreCase(sub.getStatus()) && sub.getCurrentPeriodEnd() != null && sub.getCurrentPeriodEnd().isAfter(Instant.now())) {
+            long remainingSeconds = Math.max(0, sub.getCurrentPeriodEnd().getEpochSecond() - Instant.now().getEpochSecond());
+            long totalDurationSeconds = "yearly".equalsIgnoreCase(oldPlan.getBillingInterval()) ? 365 * 86400L : 30 * 86400L;
+            double fraction = (double) remainingSeconds / totalDurationSeconds;
+            creditKobo = (long) (oldPlan.getAmountKobo() * fraction);
+        }
+
+        long amountDueKobo = newPlan.getAmountKobo() - creditKobo;
+
+        if (amountDueKobo > 0) {
+            BigDecimal amountDecimal = BigDecimal.valueOf(amountDueKobo).divide(BigDecimal.valueOf(100));
+            boolean isCard = sub.getNombaTokenKey() != null && !sub.getNombaTokenKey().isBlank();
+            if (isCard) {
+                Map<String, String> chargeResult = nombaClientService.chargeTokenizedCard(
+                        customer.getEmail(),
+                        amountDueKobo,
+                        sub.getNombaTokenKey(),
+                        nombaClientService.getSubAccountId()
+                );
+
+                if ("success".equals(chargeResult.get("status"))) {
+                    sub.setPlanId(newPlanId);
+                    sub.setStatus("ACTIVE");
+                    sub.setCurrentPeriodEnd(calculatePeriodEnd(newPlan.getBillingInterval()));
+                    sub.setNombaReference(chargeResult.get("transactionId"));
+                    subscriptionRepository.save(sub);
+
+                    LedgerEntry entry = LedgerEntry.builder()
+                            .appId(appId)
+                            .bankAccountNumber("N/A (Card Payment - Plan Change)")
+                            .amount(amountDecimal)
+                            .entryType("CREDIT")
+                            .webhookEventId(chargeResult.get("transactionId"))
+                            .build();
+                    ledgerEntryRepository.save(entry);
+
+                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal, "card (Plan Upgrade)", "ACTIVE");
+                } else {
+                    throw new IllegalStateException("Failed to process payment upgrade charge on card: " + chargeResult.get("message"));
+                }
+            } else {
+                UUID newSubId = UUID.randomUUID();
+                String orderReference = newSubId.toString();
+                String callbackUrl = nombaCallbackUrl != null ? nombaCallbackUrl : "https://arafi-api.onrender.com/v1/checkout/callback";
+                
+                Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
+                        orderReference,
+                        amountDueKobo,
+                        customer.getEmail(),
+                        callbackUrl
+                );
+
+                if ("success".equals(checkoutResult.get("status"))) {
+                    sub.setPlanId(newPlanId);
+                    sub.setStatus("PENDING");
+                    sub.setCheckoutUrl(checkoutResult.get("checkoutLink"));
+                    sub.setNombaReference(orderReference);
+                    subscriptionRepository.save(sub);
+
+                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal, "bank_transfer (Plan Upgrade pending checkout)", "PENDING");
+                } else {
+                    throw new IllegalStateException("Failed to generate checkout order for plan upgrade: " + checkoutResult.get("message"));
+                }
+            }
+        } else {
+            sub.setPlanId(newPlanId);
+            sub.setStatus("ACTIVE");
+            sub.setCurrentPeriodEnd(calculatePeriodEnd(newPlan.getBillingInterval()));
+            subscriptionRepository.save(sub);
+
+            resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), BigDecimal.ZERO, "system_credit", "ACTIVE");
+        }
+
+        appRepository.findById(appId).ifPresent(app -> {
+            if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
+                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(), sub.getPlanId(), null, "ACTIVE", "plan_changed");
+            }
+        });
+
+        return mapToResponse(sub);
+    }
+
+    @Transactional
+    public void deleteVaultedCard(UUID appId, UUID customerId) {
+        Customer customer = customerRepository.findByIdAndAppId(customerId, appId)
+                .orElseThrow(() -> new IllegalArgumentException("Customer profile not found."));
+
+        customer.setNombaTokenKey(null);
+        customerRepository.save(customer);
+
+        List<Subscription> subs = subscriptionRepository.findByCustomerId(customerId);
+        for (Subscription sub : subs) {
+            sub.setNombaTokenKey(null);
+            subscriptionRepository.save(sub);
+        }
+        System.out.println("Deleted vaulted payment card for customer: " + customerId + " in app: " + appId);
+    }
+
+    @Transactional
+    public String createCardTokenizationOrder(UUID appId, UUID customerId) {
+        Customer customer = customerRepository.findByIdAndAppId(customerId, appId)
+                .orElseThrow(() -> new IllegalArgumentException("Customer profile not found."));
+
+        long amountKobo = 1000L; // 10.00 NGN tokenization check
+        String orderReference = "card_upd_" + UUID.randomUUID().toString().substring(0, 15);
+        String callbackUrl = nombaCallbackUrl != null ? nombaCallbackUrl : "https://arafi-api.onrender.com/v1/checkout/callback";
+
+        Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
+                orderReference,
+                amountKobo,
+                customer.getEmail(),
+                callbackUrl
+        );
+
+        if ("success".equals(checkoutResult.get("status"))) {
+            List<Subscription> existingSubs = subscriptionRepository.findByCustomerId(customer.getId());
+            UUID planId = null;
+            if (!existingSubs.isEmpty()) {
+                planId = existingSubs.get(0).getPlanId();
+            } else {
+                List<Plan> plans = planRepository.findByAppId(appId);
+                if (!plans.isEmpty()) {
+                    planId = plans.get(0).getId();
+                } else {
+                    throw new IllegalStateException("At least one plan must exist in this app workspace to initialize card update.");
+                }
+            }
+
+            Subscription sub = Subscription.builder()
+                    .appId(appId)
+                    .customerId(customer.getId())
+                    .planId(planId)
+                    .status("PENDING")
+                    .nombaReference(orderReference)
+                    .checkoutUrl(checkoutResult.get("checkoutLink"))
+                    .mode(com.yourara.arafi.security.RequestContext.getMode() != null ? com.yourara.arafi.security.RequestContext.getMode() : "test")
+                    .build();
+            try {
+                sub.setId(UUID.fromString(orderReference));
+            } catch (Exception e) {
+                // Ignore
+            }
+            subscriptionRepository.save(sub);
+
+            return checkoutResult.get("checkoutLink");
+        } else {
+            throw new IllegalStateException("Failed to create tokenization checkout order: " + checkoutResult.get("message"));
+        }
+    }
+
+    private SubscriptionResponse mapToResponse(Subscription sub) {
+        return SubscriptionResponse.builder()
+                .id(sub.getId())
+                .appId(sub.getAppId())
+                .customerId(sub.getCustomerId())
+                .planId(sub.getPlanId())
+                .status(sub.getStatus())
+                .currentPeriodEnd(sub.getCurrentPeriodEnd())
+                .nombaTokenKey(sub.getNombaTokenKey())
+                .virtualAccountNumber(sub.getVirtualAccountNumber())
+                .nombaReference(sub.getNombaReference())
+                .checkoutUrl(sub.getCheckoutUrl())
+                .createdAt(sub.getCreatedAt())
+                .cancelAtPeriodEnd(sub.getCancelAtPeriodEnd())
+                .paused(sub.getPaused())
+                .build();
     }
 }
