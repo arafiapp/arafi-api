@@ -3,6 +3,7 @@ package com.yourara.arafi.service;
 import com.yourara.arafi.model.ApiKey;
 import com.yourara.arafi.model.App;
 import com.yourara.arafi.model.User;
+import com.yourara.arafi.model.response.SignupResponse;
 import com.yourara.arafi.repository.*;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -30,7 +31,7 @@ public class AuthAndWorkspaceService {
 
     // 1. HUMAN USER IDENTITY SIGNUP
     @Transactional
-    public void registerUser(String email, String plaintextPassword) {
+    public SignupResponse registerUser(String email, String plaintextPassword) {
         if (userRepository.existsByEmail(email)) {
             throw new IllegalArgumentException("A user with this email address already exists.");
         }
@@ -39,6 +40,18 @@ public class AuthAndWorkspaceService {
                 .passwordHash(passwordEncoder.encode(plaintextPassword))
                 .build();
         userRepository.save(user);
+
+        String token = Jwts.builder()
+                .subject(user.getId().toString())
+                .claim("email", user.getEmail())
+                .issuedAt(Date.from(Instant.now()))
+                .expiration(Date.from(Instant.now().plus(24, ChronoUnit.HOURS)))
+                .signWith(Keys.hmacShaKeyFor(Base64.getDecoder().decode(jwtSecret)))
+                .compact();
+
+        long appCount = 0;
+        String message = "User sign successful";
+        return new SignupResponse(message, token, appCount);
     }
 
     // 2. HUMAN USER LOGIN (Issues stateless JWT token)

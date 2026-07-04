@@ -1,6 +1,8 @@
 package com.yourara.arafi.controller;
 
 import com.yourara.arafi.model.request.AuthRequest;
+import com.yourara.arafi.model.response.LoginResponse;
+import com.yourara.arafi.model.response.SignupResponse;
 import com.yourara.arafi.service.AuthAndWorkspaceService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,8 +24,8 @@ public class AuthController {
     @Operation(summary = "Register a new user account", description = "Creates a database credentials record for the user email and password.")
     public ResponseEntity<?> signup(@RequestBody com.yourara.arafi.model.request.AuthRequest request) {
         try {
-            authService.registerUser(request.getEmail(), request.getPassword());
-            return ResponseEntity.ok(Map.of("message", "User account registered successfully."));
+            SignupResponse response =  authService.registerUser(request.getEmail(), request.getPassword());
+            return ResponseEntity.ok(response);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(new com.yourara.arafi.model.response.ErrorResponse(e.getMessage()));
         }
