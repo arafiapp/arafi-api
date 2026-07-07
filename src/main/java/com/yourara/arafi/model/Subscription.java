@@ -47,6 +47,9 @@ public class Subscription {
     @Column(name = "mode", nullable = false)
     private String mode; // "test" or "live"
 
+    @Column(name = "redirect_url", columnDefinition = "TEXT")
+    private String redirectUrl;
+
     @Column(name = "cancel_at_period_end")
     private Boolean cancelAtPeriodEnd;
 

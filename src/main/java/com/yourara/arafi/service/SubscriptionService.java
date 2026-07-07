@@ -139,6 +139,10 @@ public class SubscriptionService {
         String paymentMethod = request.getPaymentMethod();
         Instant periodEnd = null;
         String checkoutUrl = null;
+        String resolvedRedirectUrl = request.getRedirectUrl();
+        if (resolvedRedirectUrl == null || resolvedRedirectUrl.isBlank()) {
+            resolvedRedirectUrl = "https://arafi-platform.vercel.app/checkout/success";
+        }
 
         BigDecimal amountDecimal = BigDecimal.valueOf(plan.getAmountKobo()).divide(BigDecimal.valueOf(100)); // Convert kobo to NGN
 
@@ -176,12 +180,11 @@ public class SubscriptionService {
                 UUID subId = UUID.randomUUID();
                 String orderReference = subId.toString();
 
-                String callbackUrl = nombaCallbackUrl != null ? nombaCallbackUrl : "https://arafi-api.onrender.com/v1/checkout/callback";
                 Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
                         orderReference,
                         plan.getAmountKobo(),
                         customer.getEmail(),
-                        callbackUrl
+                        resolvedRedirectUrl
                 );
 
                 if ("success".equals(checkoutResult.get("status"))) {
@@ -233,6 +236,7 @@ public class SubscriptionService {
                 .nombaReference(transactionRef)
                 .checkoutUrl(checkoutUrl)
                 .mode(mode)
+                .redirectUrl(resolvedRedirectUrl)
                 .build();
 
         if ("CARD".equalsIgnoreCase(paymentMethod) && (tokenKey == null || tokenKey.isBlank()) && transactionRef != null) {
@@ -328,7 +332,10 @@ public class SubscriptionService {
                         sub.setStatus("EXPIRED");
                         
                         try {
-                            String callbackUrl = nombaCallbackUrl != null ? nombaCallbackUrl : "https://arafi-api.onrender.com/v1/checkout/callback";
+                            String callbackUrl = sub.getRedirectUrl();
+                            if (callbackUrl == null || callbackUrl.isBlank()) {
+                                callbackUrl = "https://arafi-platform.vercel.app/checkout/success";
+                            }
                             Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
                                     sub.getId().toString(),
                                     plan.getAmountKobo(),
@@ -758,7 +765,10 @@ public class SubscriptionService {
             } else {
                 UUID newSubId = UUID.randomUUID();
                 String orderReference = newSubId.toString();
-                String callbackUrl = nombaCallbackUrl != null ? nombaCallbackUrl : "https://arafi-api.onrender.com/v1/checkout/callback";
+                String callbackUrl = sub.getRedirectUrl();
+                if (callbackUrl == null || callbackUrl.isBlank()) {
+                    callbackUrl = "https://arafi-platform.vercel.app/checkout/success";
+                }
                 
                 Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
                         orderReference,
@@ -814,13 +824,16 @@ public class SubscriptionService {
     }
 
     @Transactional
-    public String createCardTokenizationOrder(UUID appId, UUID customerId) {
+    public String createCardTokenizationOrder(UUID appId, UUID customerId, String redirectUrl) {
         Customer customer = customerRepository.findByIdAndAppId(customerId, appId)
                 .orElseThrow(() -> new IllegalArgumentException("Customer profile not found."));
 
         long amountKobo = 1000L; // 10.00 NGN tokenization check
         String orderReference = "card_upd_" + UUID.randomUUID().toString().substring(0, 15);
-        String callbackUrl = nombaCallbackUrl != null ? nombaCallbackUrl : "https://arafi-api.onrender.com/v1/checkout/callback";
+        String callbackUrl = redirectUrl;
+        if (callbackUrl == null || callbackUrl.isBlank()) {
+            callbackUrl = "https://arafi-platform.vercel.app/checkout/success";
+        }
 
         Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
                 orderReference,
@@ -851,6 +864,7 @@ public class SubscriptionService {
                     .nombaReference(orderReference)
                     .checkoutUrl(checkoutResult.get("checkoutLink"))
                     .mode(com.yourara.arafi.security.RequestContext.getMode() != null ? com.yourara.arafi.security.RequestContext.getMode() : "test")
+                    .redirectUrl(callbackUrl)
                     .build();
             try {
                 sub.setId(UUID.fromString(orderReference));
@@ -880,6 +894,7 @@ public class SubscriptionService {
                 .createdAt(sub.getCreatedAt())
                 .cancelAtPeriodEnd(sub.getCancelAtPeriodEnd())
                 .paused(sub.getPaused())
+                .redirectUrl(sub.getRedirectUrl())
                 .build();
     }
 }

@@ -47,4 +47,7 @@ public class SubscriptionResponse {
 
     @JsonProperty("created_at")
     private Instant createdAt;
+
+    @JsonProperty("redirect_url")
+    private String redirectUrl;
 }

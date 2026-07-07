@@ -18,4 +18,7 @@ public class CreateSubscriptionRequest {
 
     @JsonProperty("payment_method")
     private String paymentMethod;
+
+    @JsonProperty("redirect_url")
+    private String redirectUrl;
 }
