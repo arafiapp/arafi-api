@@ -897,4 +897,85 @@ public class SubscriptionService {
                 .redirectUrl(sub.getRedirectUrl())
                 .build();
     }
+
+    @Transactional
+    public Map<String, Object> verifySubscriptionPayment(UUID appId, UUID subscriptionId) {
+        Subscription subscription = subscriptionRepository.findById(subscriptionId)
+                .orElseThrow(() -> new IllegalArgumentException("Subscription not found."));
+
+        if (!subscription.getAppId().equals(appId)) {
+            throw new IllegalArgumentException("Unauthorized subscription context.");
+        }
+
+        if ("ACTIVE".equalsIgnoreCase(subscription.getStatus())) {
+            return Map.of(
+                "success", true,
+                "status", "ACTIVE",
+                "message", "Subscription is already active."
+            );
+        }
+
+        System.out.println("[Payment Verification] Querying Nomba status for subscription ID: " + subscriptionId);
+        Map<String, Object> txDetails = nombaClientService.fetchCheckoutTransaction("ORDER_REFERENCE", subscriptionId.toString());
+
+        if (txDetails != null && "00".equals(txDetails.get("code"))) {
+            if (txDetails.get("data") instanceof Map) {
+                Map<String, Object> data = (Map<String, Object>) txDetails.get("data");
+                if (data != null && (Boolean.TRUE.equals(data.get("success")) || "true".equals(data.get("success").toString()))) {
+                    // Extract amount from order details
+                    BigDecimal amount = BigDecimal.ZERO;
+                    if (data.get("order") instanceof Map) {
+                        Map orderMap = (Map) data.get("order");
+                        if (orderMap.get("amount") != null) {
+                            amount = new BigDecimal(orderMap.get("amount").toString());
+                        }
+                    }
+
+                    // Extract transaction ID / payment reference
+                    String transactionId = null;
+                    if (data.get("transactionDetails") instanceof Map) {
+                        Map txMap = (Map) data.get("transactionDetails");
+                        if (txMap.get("paymentReference") != null) {
+                            transactionId = txMap.get("paymentReference").toString();
+                        }
+                    }
+                    if (transactionId == null) {
+                        transactionId = subscriptionId.toString();
+                    }
+
+                    // Extract tokenKey if card payment was tokenized
+                    String tokenKey = "N/A";
+                    if (data.get("tokenKey") != null) {
+                        tokenKey = data.get("tokenKey").toString();
+                    }
+
+                    System.out.println("[Payment Verification] Checkout payment verified successfully on Nomba. Activating subscription...");
+                    processCardPaymentSuccess(subscriptionId.toString(), tokenKey, amount, transactionId);
+
+                    return Map.of(
+                        "success", true,
+                        "status", "ACTIVE",
+                        "message", "Payment verified. Subscription is now active.",
+                        "nombaDetails", txDetails
+                    );
+                } else {
+                    String message = data != null && data.get("message") != null ? data.get("message").toString() : "Payment not completed yet.";
+                    return Map.of(
+                        "success", false,
+                        "status", "PENDING",
+                        "message", "Transaction found on Nomba, but payment is not successful: " + message,
+                        "nombaDetails", txDetails
+                    );
+                }
+            }
+        }
+
+        String description = txDetails != null && txDetails.get("description") != null ? txDetails.get("description").toString() : "Record not found";
+        return Map.of(
+            "success", false,
+            "status", "PENDING",
+            "message", "Payment verification failed: " + description,
+            "nombaDetails", txDetails != null ? txDetails : Map.of()
+        );
+    }
 }

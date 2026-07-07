@@ -190,4 +190,23 @@ public class SubscriptionController {
             return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
         }
     }
+
+    @PostMapping("/{id}/verify-payment")
+    @Operation(
+            summary = "Manually check status and verify a subscription payment",
+            description = "Checks the transaction payment status directly on Nomba and activates the subscription if successful. Requires API key authentication.",
+            security = @SecurityRequirement(name = OpenApiConfig.API_KEY_SCHEME)
+    )
+    public ResponseEntity<?> verifyPayment(@PathVariable UUID id) {
+        UUID appId = RequestContext.getAppId();
+        if (appId == null) {
+            return ResponseEntity.status(401).body(new ErrorResponse("Unauthorized API context. Use Bearer arafi_test_..."));
+        }
+        try {
+            java.util.Map<String, Object> result = subscriptionService.verifySubscriptionPayment(appId, id);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
 }
