@@ -26,6 +26,9 @@ public class App {
     @Column(name = "webhook_url")
     private String webhookUrl;
 
+    @Column(name = "webhook_secret")
+    private String webhookSecret;
+
     @Column(name = "payout_bank_account")
     private String payoutBankAccountNumber;
 
@@ -43,5 +46,8 @@ public class App {
         if (this.id == null) this.id = UUID.randomUUID();
         this.status = "active";
         this.createdAt = Instant.now();
+        if (this.webhookSecret == null) {
+            this.webhookSecret = "arafi_whsec_" + UUID.randomUUID().toString().replace("-", "");
+        }
     }
 }
