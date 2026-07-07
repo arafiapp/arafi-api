@@ -78,4 +78,25 @@ public class AppWorkspaceController {
             return ResponseEntity.badRequest().body(new com.yourara.arafi.model.response.ErrorResponse(e.getMessage()));
         }
     }
+
+    @PostMapping("/{appId}/api-keys/regenerate")
+    @Operation(
+            summary = "Regenerate active API key for a workspace",
+            description = "Revokes the active key of the specified mode (test or live) and generates a new plaintext key. Requires user authentication context (JWT).",
+            security = @SecurityRequirement(name = OpenApiConfig.USER_JWT_SCHEME)
+    )
+    public ResponseEntity<?> regenerateWorkspaceApiKey(
+            @PathVariable UUID appId,
+            @RequestParam String mode) {
+        try {
+            UUID userId = RequestContext.getUserId();
+            if (userId == null) {
+                return ResponseEntity.status(401).body(new com.yourara.arafi.model.response.ErrorResponse("Unauthorized user context."));
+            }
+
+            return ResponseEntity.ok(workspaceService.regenerateApiKey(userId, appId, mode));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new com.yourara.arafi.model.response.ErrorResponse(e.getMessage()));
+        }
+    }
 }

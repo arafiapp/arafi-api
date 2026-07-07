@@ -174,4 +174,35 @@ public class AuthAndWorkspaceService {
             "live_key", liveKey
         );
     }
+
+    @Transactional
+    public Map<String, String> regenerateApiKey(UUID userId, UUID appId, String mode) {
+        if (!"test".equalsIgnoreCase(mode) && !"live".equalsIgnoreCase(mode)) {
+            throw new IllegalArgumentException("Invalid mode. Expected 'test' or 'live'.");
+        }
+
+        App app = appRepository.findById(appId)
+                .orElseThrow(() -> new IllegalArgumentException("Workspace not found."));
+
+        if (!app.getUser().getId().equals(userId)) {
+            throw new IllegalArgumentException("Unauthorized workspace context.");
+        }
+
+        // Revoke existing active key(s) for this mode
+        List<ApiKey> activeKeys = apiKeyRepository.findByAppIdAndRevokedAtIsNull(appId);
+        for (ApiKey key : activeKeys) {
+            if (mode.equalsIgnoreCase(key.getMode())) {
+                key.setRevokedAt(Instant.now());
+                apiKeyRepository.save(key);
+            }
+        }
+
+        // Generate and save new key
+        String newPlaintextKey = generateAndSaveKey(app, mode.toLowerCase());
+
+        return Map.of(
+            "mode", mode.toLowerCase(),
+            "api_key", newPlaintextKey
+        );
+    }
 }
