@@ -47,7 +47,7 @@ public class NombaClientService {
     private final Map<String, CachedToken> tokenCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     private String fetchFreshToken(String cacheKey) {
-        String baseUrl = "live".equalsIgnoreCase(cacheKey) ? "https://api.nomba.com" : "https://sandbox.api.nomba.com";
+        String baseUrl = "live".equalsIgnoreCase(cacheKey) ? "https://api.nomba.com" : "https://sandbox.nomba.com";
         String url = baseUrl + "/v1/auth/token/issue";
 
         String clientId = "live".equalsIgnoreCase(cacheKey) ? liveClientId : testClientId;
@@ -64,6 +64,8 @@ public class NombaClientService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
+        System.out.println("[Nomba Integration] Fetching fresh token from URL: " + url + " using accountId: " + parentId);
+
         try {
             ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
             Map responseBody = response.getBody();
@@ -71,6 +73,7 @@ public class NombaClientService {
                 if (responseBody.get("data") instanceof Map) {
                     Map dataMap = (Map) responseBody.get("data");
                     if (dataMap.get("access_token") != null) {
+                        System.out.println("[Nomba Integration] Fresh token successfully fetched.");
                         return dataMap.get("access_token").toString();
                     }
                 }
@@ -80,8 +83,9 @@ public class NombaClientService {
                     : "Unknown error issuing token";
             throw new IllegalStateException("Failed to issue Nomba access token: " + errorMsg);
         } catch (Exception e) {
+            System.err.println("[Nomba Integration] Failed to fetch access token: " + e.getMessage());
             if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
-                System.err.println("Failed to fetch Nomba token. Fallback to client secret direct auth: " + e.getMessage());
+                System.err.println("[Nomba Integration] Profile is test/dev. Fallback to client secret direct auth: " + e.getMessage());
                 return clientSecret;
             }
             throw new IllegalStateException("Failed to fetch Nomba access token: " + e.getMessage(), e);
@@ -195,6 +199,8 @@ public class NombaClientService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
+        System.out.println("[Nomba Integration] chargeTokenizedCard. URL: " + url + ", Customer: " + customerEmail + ", Amount: " + amountKobo + " kobo, Target subAccountId: " + (subAccountId != null ? subAccountId : this.subAccountId));
+
         try {
             ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
             Map responseBody = response.getBody();
@@ -211,16 +217,20 @@ public class NombaClientService {
                 if (transactionId == null) {
                     transactionId = orderReference;
                 }
+                System.out.println("[Nomba Integration] chargeTokenizedCard Successful. transactionId: " + transactionId);
                 return Map.of(
                     "status", "success",
                     "transactionId", transactionId
                 );
             } else {
+                System.err.println("[Nomba Integration] chargeTokenizedCard API error response: " + responseBody);
                 String mode = com.yourara.arafi.security.RequestContext.getMode();
                 if (mode == null || "test".equalsIgnoreCase(mode) || (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test")))) {
+                    String fallbackId = "nbr_chg_" + UUID.randomUUID().toString().substring(0, 15);
+                    System.out.println("[Nomba Integration] Profile is test/dev. Fallback to mock charge ID: " + fallbackId);
                     return Map.of(
                         "status", "success",
-                        "transactionId", "nbr_chg_" + UUID.randomUUID().toString().substring(0, 15)
+                        "transactionId", fallbackId
                     );
                 }
                 String errorMsg = responseBody != null && responseBody.get("description") != null 
@@ -232,11 +242,14 @@ public class NombaClientService {
                 );
             }
         } catch (Exception e) {
+            System.err.println("[Nomba Integration] chargeTokenizedCard Exception: " + e.getMessage());
             String mode = com.yourara.arafi.security.RequestContext.getMode();
             if (mode == null || "test".equalsIgnoreCase(mode) || (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test")))) {
+                String fallbackId = "nbr_chg_" + UUID.randomUUID().toString().substring(0, 15);
+                System.out.println("[Nomba Integration] Profile is test/dev. Fallback to mock charge ID: " + fallbackId);
                 return Map.of(
                     "status", "success",
-                    "transactionId", "nbr_chg_" + UUID.randomUUID().toString().substring(0, 15)
+                    "transactionId", fallbackId
                 );
             }
             return Map.of(
@@ -268,6 +281,8 @@ public class NombaClientService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
+        System.out.println("[Nomba Integration] createCheckoutOrder. URL: " + url + ", Reference: " + orderReference + ", Amount: " + amountKobo + " kobo, Customer: " + customerEmail + ", CallbackUrl: " + callbackUrl);
+
         try {
             ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
             Map responseBody = response.getBody();
@@ -280,12 +295,14 @@ public class NombaClientService {
                     }
                 }
                 if (checkoutLink != null) {
+                    System.out.println("[Nomba Integration] createCheckoutOrder Success. checkoutLink: " + checkoutLink);
                     return Map.of(
                         "status", "success",
                         "checkoutLink", checkoutLink
                     );
                 }
             }
+            System.err.println("[Nomba Integration] createCheckoutOrder API error response: " + responseBody);
             String errorMsg = responseBody != null && responseBody.get("description") != null 
                     ? responseBody.get("description").toString() 
                     : "Nomba checkout order creation failed";
@@ -294,10 +311,13 @@ public class NombaClientService {
                 "message", errorMsg
             );
         } catch (Exception e) {
+            System.err.println("[Nomba Integration] createCheckoutOrder Exception: " + e.getMessage());
             if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
+                String fallbackUrl = "https://sandbox.nomba.com/checkout/" + orderReference;
+                System.out.println("[Nomba Integration] Profile is test/dev. Fallback to mock checkout URL: " + fallbackUrl);
                 return Map.of(
                     "status", "success",
-                    "checkoutLink", "https://sandbox.nomba.com/checkout/" + orderReference
+                    "checkoutLink", fallbackUrl
                 );
             }
             return Map.of(
@@ -324,6 +344,8 @@ public class NombaClientService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
+        System.out.println("[Nomba Integration] createVirtualAccount. URL: " + url + ", Ref: " + accountRef + ", Name: " + accountName);
+
         try {
             ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
             Map responseBody = response.getBody();
@@ -340,6 +362,7 @@ public class NombaClientService {
                     }
                 }
                 if (bankAccountNumber != null) {
+                    System.out.println("[Nomba Integration] createVirtualAccount Success. accountNumber: " + bankAccountNumber + ", bankName: " + bankName);
                     return Map.of(
                         "status", "success",
                         "bankAccountNumber", bankAccountNumber,
@@ -348,6 +371,7 @@ public class NombaClientService {
                     );
                 }
             }
+            System.err.println("[Nomba Integration] createVirtualAccount API error response: " + responseBody);
             String errorMsg = responseBody != null && responseBody.get("description") != null 
                     ? responseBody.get("description").toString() 
                     : "Nomba virtual account creation failed";
@@ -356,7 +380,9 @@ public class NombaClientService {
                 "message", errorMsg
             );
         } catch (Exception e) {
+            System.err.println("[Nomba Integration] createVirtualAccount Exception: " + e.getMessage());
             if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
+                System.out.println("[Nomba Integration] Profile is test/dev. Fallback to provision sandbox virtual account.");
                 return provisionSandboxAccount(accountName, accountRef);
             }
             return Map.of(
@@ -384,6 +410,8 @@ public class NombaClientService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
+        System.out.println("[Nomba Integration] processTransfer. URL: " + url + ", BankCode: " + bankCode + ", Account: " + accountNumber + ", Amount: " + amountKobo + " kobo, Ref: " + transferRef);
+
         try {
             ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
             Map responseBody = response.getBody();
@@ -398,11 +426,13 @@ public class NombaClientService {
                 if (transferId == null) {
                     transferId = transferRef;
                 }
+                System.out.println("[Nomba Integration] processTransfer Payout Success. transferId: " + transferId);
                 return Map.of(
                     "status", "success",
                     "transferId", transferId
                 );
             }
+            System.err.println("[Nomba Integration] processTransfer API error response: " + responseBody);
             String errorMsg = responseBody != null && responseBody.get("description") != null 
                     ? responseBody.get("description").toString() 
                     : "Nomba transfer execution failed";
@@ -411,11 +441,14 @@ public class NombaClientService {
                 "message", errorMsg
             );
         } catch (Exception e) {
+            System.err.println("[Nomba Integration] processTransfer Exception: " + e.getMessage());
             String mode = com.yourara.arafi.security.RequestContext.getMode();
             if (mode == null || "test".equalsIgnoreCase(mode)) {
+                String fallbackTxId = "nmb_txn_" + UUID.randomUUID().toString().substring(0, 15);
+                System.out.println("[Nomba Integration] Test mode active. Fallback to mock payout transfer ID: " + fallbackTxId);
                 return Map.of(
                     "status", "success",
-                    "transferId", "nmb_txn_" + UUID.randomUUID().toString().substring(0, 15)
+                    "transferId", fallbackTxId
                 );
             }
             return Map.of(
