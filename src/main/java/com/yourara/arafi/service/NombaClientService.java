@@ -64,7 +64,15 @@ public class NombaClientService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-        System.out.println("[Nomba Integration] Fetching fresh token from URL: " + url + " using accountId: " + parentId);
+        String maskedSecret = (clientSecret != null && clientSecret.length() > 8) 
+            ? clientSecret.substring(0, 4) + "..." + clientSecret.substring(clientSecret.length() - 4) 
+            : clientSecret;
+        System.out.println("[Nomba Integration] TOKEN REQUEST PACKET:");
+        System.out.println("  - URL: " + url);
+        System.out.println("  - Header 'accountId': " + parentId);
+        System.out.println("  - Body 'client_id': " + clientId);
+        System.out.println("  - Body 'client_secret': " + maskedSecret + " (Length: " + (clientSecret != null ? clientSecret.length() : 0) + ")");
+        System.out.println("  - Body 'grant_type': client_credentials");
 
         try {
             ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
@@ -73,7 +81,7 @@ public class NombaClientService {
                 if (responseBody.get("data") instanceof Map) {
                     Map dataMap = (Map) responseBody.get("data");
                     if (dataMap.get("access_token") != null) {
-                        System.out.println("[Nomba Integration] Fresh token successfully fetched. Assess token" +dataMap.get("access_token").toString());
+                        System.out.println("[Nomba Integration] Fresh token successfully fetched. Access token: " + dataMap.get("access_token").toString());
                         return dataMap.get("access_token").toString();
                     }
                 }
@@ -82,10 +90,17 @@ public class NombaClientService {
                     ? responseBody.get("description").toString() 
                     : "Unknown error issuing token";
             throw new IllegalStateException("Failed to issue Nomba access token: " + errorMsg);
-        } catch (Exception e) {
-            System.err.println("[Nomba Integration] Failed to fetch access token: " + e.getMessage());
+        } catch (org.springframework.web.client.HttpStatusCodeException e) {
+            System.err.println("[Nomba Integration] Token Request HttpStatusCodeException: " + e.getStatusCode() + " - Response Body: " + e.getResponseBodyAsString());
             if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
-                System.err.println("[Nomba Integration] Profile is test/dev. Fallback to client secret direct auth: " + e.getMessage());
+                System.err.println("[Nomba Integration] Fallback to client secret direct auth: " + e.getMessage());
+                return clientSecret;
+            }
+            throw new IllegalStateException("Failed to fetch Nomba access token: " + e.getResponseBodyAsString(), e);
+        } catch (Exception e) {
+            System.err.println("[Nomba Integration] Token Request Exception: " + e.getMessage());
+            if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
+                System.err.println("[Nomba Integration] Fallback to client secret direct auth: " + e.getMessage());
                 return clientSecret;
             }
             throw new IllegalStateException("Failed to fetch Nomba access token: " + e.getMessage(), e);
@@ -174,7 +189,7 @@ public class NombaClientService {
             );
         }
         String baseUrl = getBaseUrl();
-        String path = baseUrl.contains("sandbox") ? "/sandbox/checkout/tokenized-card-payment" : "/v1/checkout/tokenized-card-payment";
+        String path = "/v1/checkout/tokenized-card-payment";
         String url = baseUrl + path;
         
         // Strict payload body mapping matching Nomba specs:
@@ -261,7 +276,7 @@ public class NombaClientService {
 
     public Map<String, String> createCheckoutOrder(String orderReference, long amountKobo, String customerEmail, String callbackUrl) {
         String baseUrl = getBaseUrl();
-        String path = baseUrl.contains("sandbox") ? "/sandbox/checkout/order" : "/v1/checkout/order";
+        String path = "/v1/checkout/order";
         String url = baseUrl + path;
 
         Map<String, Object> orderMap = new HashMap<>();
@@ -281,7 +296,16 @@ public class NombaClientService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-        System.out.println("[Nomba Integration] createCheckoutOrder. URL: " + url + ", Reference: " + orderReference + ", Amount: " + amountKobo + " kobo, Customer: " + customerEmail + ", CallbackUrl: " + callbackUrl);
+        String token = getAuthToken();
+        String maskedToken = (token != null && token.length() > 15)
+            ? token.substring(0, 10) + "..." + token.substring(token.length() - 5)
+            : token;
+
+        System.out.println("[Nomba Integration] CHECKOUT ORDER REQUEST PACKET:");
+        System.out.println("  - URL: " + url);
+        System.out.println("  - Header 'accountId': " + parentId);
+        System.out.println("  - Header 'Authorization': Bearer " + maskedToken + " (Length: " + (token != null ? token.length() : 0) + ")");
+        System.out.println("  - Request Body: " + requestBody);
 
         try {
             ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
@@ -309,6 +333,20 @@ public class NombaClientService {
             return Map.of(
                 "status", "failed",
                 "message", errorMsg
+            );
+        } catch (org.springframework.web.client.HttpStatusCodeException e) {
+            System.err.println("[Nomba Integration] createCheckoutOrder HttpStatusCodeException: " + e.getStatusCode() + " - Response Body: " + e.getResponseBodyAsString());
+            if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
+                String fallbackUrl = "https://sandbox.nomba.com/checkout/" + orderReference;
+                System.out.println("[Nomba Integration] Fallback to mock checkout URL: " + fallbackUrl);
+                return Map.of(
+                    "status", "success",
+                    "checkoutLink", fallbackUrl
+                );
+            }
+            return Map.of(
+                "status", "failed",
+                "message", e.getResponseBodyAsString()
             );
         } catch (Exception e) {
             System.err.println("[Nomba Integration] createCheckoutOrder Exception: " + e.getMessage());
