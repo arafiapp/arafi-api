@@ -9,6 +9,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
 
+import com.yourara.arafi.repository.AppRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -18,7 +23,9 @@ import java.util.List;
 public class WebhookDispatchScheduler {
 
     private final WebhookDispatchRepository webhookDispatchRepository;
+    private final AppRepository appRepository;
     private final RestTemplate restTemplate;
+    private final ObjectMapper objectMapper;
 
     @Scheduled(fixedDelay = 5000) // Checks every 5 seconds
     @Transactional
@@ -37,10 +44,26 @@ public class WebhookDispatchScheduler {
             dispatch.setLastAttemptAt(Instant.now());
 
             try {
-                // Perform the HTTP POST
+                // 1. Serialize payload map to JSON string
+                String jsonPayload = objectMapper.writeValueAsString(dispatch.getPayload());
+
+                // 2. Build headers
+                HttpHeaders headers = new HttpHeaders();
+                headers.setContentType(MediaType.APPLICATION_JSON);
+
+                // 3. Retrieve webhook secret and sign if available
+                appRepository.findById(dispatch.getAppId()).ifPresent(app -> {
+                    if (app.getWebhookSecret() != null) {
+                        String signature = calculateHmac(jsonPayload, app.getWebhookSecret());
+                        headers.set("arafi-signature", signature);
+                    }
+                });
+
+                // 4. Perform the HTTP POST
+                HttpEntity<String> entity = new HttpEntity<>(jsonPayload, headers);
                 ResponseEntity<String> response = restTemplate.postForEntity(
                         dispatch.getWebhookUrl(),
-                        dispatch.getPayload(),
+                        entity,
                         String.class
                 );
 
@@ -74,6 +97,18 @@ public class WebhookDispatchScheduler {
             dispatch.setNextAttemptAt(Instant.now().plus(delayMinutes, ChronoUnit.MINUTES));
             System.out.println("Webhook Outbox: Rescheduled dispatch ID " + dispatch.getId() 
                     + " to " + dispatch.getNextAttemptAt() + " (after " + delayMinutes + " mins delay).");
+        }
+    }
+
+    private String calculateHmac(String data, String key) {
+        try {
+            javax.crypto.Mac hmac = javax.crypto.Mac.getInstance("HmacSHA256");
+            javax.crypto.spec.SecretKeySpec secretKey = new javax.crypto.spec.SecretKeySpec(key.getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256");
+            hmac.init(secretKey);
+            byte[] rawHash = hmac.doFinal(data.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(rawHash);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to calculate HMAC signature", e);
         }
     }
 }

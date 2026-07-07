@@ -119,10 +119,10 @@ public class NombaClientService {
     private String getBaseUrl() {
         String mode = com.yourara.arafi.security.RequestContext.getMode();
         if (mode != null) {
-            return "live".equalsIgnoreCase(mode) ? "https://api.nomba.com" : "https://sandbox.api.nomba.com";
+            return "live".equalsIgnoreCase(mode) ? "https://api.nomba.com" : "https://sandbox.nomba.com";
         }
         if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
-            return "https://sandbox.api.nomba.com";
+            return "https://sandbox.nomba.com";
         }
         return "https://api.nomba.com";
     }
@@ -170,7 +170,8 @@ public class NombaClientService {
             );
         }
         String baseUrl = getBaseUrl();
-        String url = baseUrl + "/v1/checkout/tokenized-card-payment";
+        String path = baseUrl.contains("sandbox") ? "/sandbox/checkout/tokenized-card-payment" : "/v1/checkout/tokenized-card-payment";
+        String url = baseUrl + path;
         
         // Strict payload body mapping matching Nomba specs:
         Map<String, Object> orderMap = new HashMap<>();
@@ -247,7 +248,8 @@ public class NombaClientService {
 
     public Map<String, String> createCheckoutOrder(String orderReference, long amountKobo, String customerEmail, String callbackUrl) {
         String baseUrl = getBaseUrl();
-        String url = baseUrl + "/v1/checkout/order";
+        String path = baseUrl.contains("sandbox") ? "/sandbox/checkout/order" : "/v1/checkout/order";
+        String url = baseUrl + path;
 
         Map<String, Object> orderMap = new HashMap<>();
         orderMap.put("orderReference", orderReference);

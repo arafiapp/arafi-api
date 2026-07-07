@@ -205,4 +205,30 @@ public class AuthAndWorkspaceService {
             "api_key", newPlaintextKey
         );
     }
+
+    @Transactional
+    public Map<String, Object> updateWebhookSettings(UUID userId, UUID appId, String webhookUrl, boolean rotateSecret) {
+        App app = appRepository.findById(appId)
+                .orElseThrow(() -> new IllegalArgumentException("Workspace not found."));
+
+        if (!app.getUser().getId().equals(userId)) {
+            throw new IllegalArgumentException("Unauthorized workspace context.");
+        }
+
+        if (webhookUrl != null) {
+            app.setWebhookUrl(webhookUrl);
+        }
+
+        if (rotateSecret || app.getWebhookSecret() == null) {
+            app.setWebhookSecret("arafi_whsec_" + UUID.randomUUID().toString().replace("-", ""));
+        }
+
+        appRepository.save(app);
+
+        return Map.of(
+            "app_id", app.getId(),
+            "webhook_url", app.getWebhookUrl() != null ? app.getWebhookUrl() : "",
+            "webhook_secret", app.getWebhookSecret()
+        );
+    }
 }
