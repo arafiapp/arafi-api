@@ -121,4 +121,57 @@ public class AuthAndWorkspaceService {
 
         return plaintextApiKey;
     }
+
+    public List<com.yourara.arafi.model.response.CreateWorkspaceResponse> getWorkspacesForUser(UUID userId) {
+        List<App> apps = appRepository.findByUserId(userId);
+        List<com.yourara.arafi.model.response.CreateWorkspaceResponse> responses = new ArrayList<>();
+        for (App app : apps) {
+            List<ApiKey> keys = apiKeyRepository.findByAppIdAndRevokedAtIsNull(app.getId());
+            String sandboxKey = keys.stream()
+                    .filter(k -> "test".equalsIgnoreCase(k.getMode()))
+                    .findFirst()
+                    .map(k -> k.getKeyPrefix() + "********************")
+                    .orElse("");
+            String liveKey = keys.stream()
+                    .filter(k -> "live".equalsIgnoreCase(k.getMode()))
+                    .findFirst()
+                    .map(k -> k.getKeyPrefix() + "********************")
+                    .orElse("");
+
+            responses.add(com.yourara.arafi.model.response.CreateWorkspaceResponse.builder()
+                    .appId(app.getId())
+                    .appName(app.getName())
+                    .status(app.getStatus())
+                    .sandboxKey(sandboxKey)
+                    .liveKey(liveKey)
+                    .build());
+        }
+        return responses;
+    }
+
+    public Map<String, String> getWorkspaceApiKeys(UUID userId, UUID appId) {
+        App app = appRepository.findById(appId)
+                .orElseThrow(() -> new IllegalArgumentException("Workspace not found."));
+
+        if (!app.getUser().getId().equals(userId)) {
+            throw new IllegalArgumentException("Unauthorized workspace context.");
+        }
+
+        List<ApiKey> keys = apiKeyRepository.findByAppIdAndRevokedAtIsNull(appId);
+        String sandboxKey = keys.stream()
+                .filter(k -> "test".equalsIgnoreCase(k.getMode()))
+                .findFirst()
+                .map(k -> k.getKeyPrefix() + "********************")
+                .orElse("");
+        String liveKey = keys.stream()
+                .filter(k -> "live".equalsIgnoreCase(k.getMode()))
+                .findFirst()
+                .map(k -> k.getKeyPrefix() + "********************")
+                .orElse("");
+
+        return Map.of(
+            "sandbox_key", sandboxKey,
+            "live_key", liveKey
+        );
+    }
 }

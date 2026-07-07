@@ -40,4 +40,42 @@ public class AppWorkspaceController {
             return ResponseEntity.badRequest().body(new com.yourara.arafi.model.response.ErrorResponse(e.getMessage()));
         }
     }
+
+    @GetMapping
+    @Operation(
+            summary = "Get user's app workspaces",
+            description = "Retrieves all app workspaces created by the authenticated user. Requires user authentication context (JWT).",
+            security = @SecurityRequirement(name = OpenApiConfig.USER_JWT_SCHEME)
+    )
+    public ResponseEntity<?> getWorkspaces() {
+        try {
+            UUID userId = RequestContext.getUserId();
+            if (userId == null) {
+                return ResponseEntity.status(401).body(new com.yourara.arafi.model.response.ErrorResponse("Unauthorized user context."));
+            }
+
+            return ResponseEntity.ok(workspaceService.getWorkspacesForUser(userId));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new com.yourara.arafi.model.response.ErrorResponse(e.getMessage()));
+        }
+    }
+
+    @GetMapping("/{appId}/api-keys")
+    @Operation(
+            summary = "Get active API keys for a workspace",
+            description = "Retrieves active masked sandbox and live keys for a workspace owned by the authenticated user. Requires user authentication context (JWT).",
+            security = @SecurityRequirement(name = OpenApiConfig.USER_JWT_SCHEME)
+    )
+    public ResponseEntity<?> getWorkspaceApiKeys(@PathVariable UUID appId) {
+        try {
+            UUID userId = RequestContext.getUserId();
+            if (userId == null) {
+                return ResponseEntity.status(401).body(new com.yourara.arafi.model.response.ErrorResponse("Unauthorized user context."));
+            }
+
+            return ResponseEntity.ok(workspaceService.getWorkspaceApiKeys(userId, appId));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new com.yourara.arafi.model.response.ErrorResponse(e.getMessage()));
+        }
+    }
 }

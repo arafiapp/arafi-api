@@ -9,4 +9,5 @@ import java.util.UUID;
 public interface ApiKeyRepository extends JpaRepository<ApiKey, UUID> {
 
     List<ApiKey> findByKeyPrefixAndRevokedAtIsNull(String keyPrefix);
+    List<ApiKey> findByAppIdAndRevokedAtIsNull(UUID appId);
 }
