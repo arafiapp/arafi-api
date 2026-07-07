@@ -46,7 +46,7 @@ public class AuthAndWorkspaceService {
                 .claim("email", user.getEmail())
                 .issuedAt(Date.from(Instant.now()))
                 .expiration(Date.from(Instant.now().plus(24, ChronoUnit.HOURS)))
-                .signWith(Keys.hmacShaKeyFor(Base64.getDecoder().decode(jwtSecret)))
+                .signWith(Keys.hmacShaKeyFor(getJwtSecretBytes()))
                 .compact();
 
         long appCount = 0;
@@ -69,7 +69,7 @@ public class AuthAndWorkspaceService {
                 .claim("email", user.getEmail())
                 .issuedAt(Date.from(Instant.now()))
                 .expiration(Date.from(Instant.now().plus(24, ChronoUnit.HOURS)))
-                .signWith(Keys.hmacShaKeyFor(Base64.getDecoder().decode(jwtSecret)))
+                .signWith(Keys.hmacShaKeyFor(getJwtSecretBytes()))
                 .compact();
 
         long appCount = appRepository.countByUserId(user.getId());
@@ -230,5 +230,22 @@ public class AuthAndWorkspaceService {
             "webhook_url", app.getWebhookUrl() != null ? app.getWebhookUrl() : "",
             "webhook_secret", app.getWebhookSecret()
         );
+    }
+
+    private byte[] getJwtSecretBytes() {
+        try {
+            byte[] decoded = Base64.getDecoder().decode(jwtSecret);
+            if (decoded.length >= 32) {
+                return decoded;
+            }
+        } catch (IllegalArgumentException e) {
+            // Fall through to hashing
+        }
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            return digest.digest(jwtSecret.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.security.NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 algorithm not available", ex);
+        }
     }
 }

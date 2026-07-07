@@ -85,7 +85,7 @@ public class SecurityInterceptorFilter extends OncePerRequestFilter {
             // 4. ROUTE B: Handle Frontend Dashboard User JWTs
             else {
                 Claims claims = Jwts.parser()
-                        .verifyWith(Keys.hmacShaKeyFor(Base64.getDecoder().decode(jwtSecret)))
+                        .verifyWith(Keys.hmacShaKeyFor(getJwtSecretBytes()))
                         .build()
                         .parseSignedClaims(token)
                         .getPayload();
@@ -117,5 +117,22 @@ public class SecurityInterceptorFilter extends OncePerRequestFilter {
         response.setStatus(status);
         response.setContentType("application/json");
         response.getWriter().write(String.format("{\"error\": \"%s\"}", message));
+    }
+
+    private byte[] getJwtSecretBytes() {
+        try {
+            byte[] decoded = Base64.getDecoder().decode(jwtSecret);
+            if (decoded.length >= 32) {
+                return decoded;
+            }
+        } catch (IllegalArgumentException e) {
+            // Fall through to hashing
+        }
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            return digest.digest(jwtSecret.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.security.NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 algorithm not available", ex);
+        }
     }
 }

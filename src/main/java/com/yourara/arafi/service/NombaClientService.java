@@ -73,7 +73,7 @@ public class NombaClientService {
                 if (responseBody.get("data") instanceof Map) {
                     Map dataMap = (Map) responseBody.get("data");
                     if (dataMap.get("access_token") != null) {
-                        System.out.println("[Nomba Integration] Fresh token successfully fetched.");
+                        System.out.println("[Nomba Integration] Fresh token successfully fetched. Assess token" +dataMap.get("access_token").toString());
                         return dataMap.get("access_token").toString();
                     }
                 }
