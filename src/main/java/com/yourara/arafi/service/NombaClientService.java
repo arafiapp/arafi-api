@@ -525,4 +525,34 @@ public class NombaClientService {
             return Map.of("success", false, "message", e.getMessage());
         }
     }
+
+    public Map<String, Object> fetchTransactionByOrderReference(String orderReference) {
+        String baseUrl = getBaseUrl();
+        String url = baseUrl + "/v1/transactions/accounts/single?orderReference=" + orderReference;
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "Bearer " + getAuthToken());
+        headers.set("accountId", parentId);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        System.out.println("[Nomba Integration] Fetching transaction by orderReference. URL: " + url);
+        try {
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    url,
+                    org.springframework.http.HttpMethod.GET,
+                    entity,
+                    Map.class
+            );
+            System.out.println("[Nomba Integration] Fetch transaction response: " + response.getBody());
+            if (response.getBody() != null) {
+                return (Map<String, Object>) response.getBody();
+            }
+            return Map.of("code", "01", "description", "Empty response from Nomba");
+        } catch (Exception e) {
+            System.err.println("[Nomba Integration] Fetch transaction error: " + e.getMessage());
+            return Map.of("code", "01", "description", e.getMessage());
+        }
+    }
 }

@@ -525,12 +525,18 @@ public class SubscriptionService {
                 final Subscription subscription = foundSubscription;
                 Customer customer = customerRepository.findById(subscription.getCustomerId()).orElse(null);
                 if (customer != null) {
-                    customer.setNombaTokenKey(tokenKey);
-                    customerRepository.save(customer);
+                    // Only update tokenKey if we actually have one — do not null-out an existing vault entry
+                    if (tokenKey != null && !tokenKey.isBlank() && !"N/A".equals(tokenKey)) {
+                        customer.setNombaTokenKey(tokenKey);
+                        customerRepository.save(customer);
+                    }
                 }
 
                 subscription.setStatus("ACTIVE");
-                subscription.setNombaTokenKey(tokenKey);
+                // Only update tokenKey on subscription if we have one
+                if (tokenKey != null && !tokenKey.isBlank() && !"N/A".equals(tokenKey)) {
+                    subscription.setNombaTokenKey(tokenKey);
+                }
                 subscription.setNombaReference(transactionId);
                 subscription.setCurrentPeriodEnd(calculatePeriodEnd(planRepository.findById(subscription.getPlanId())
                         .map(Plan::getBillingInterval).orElse("monthly")));
@@ -981,6 +987,7 @@ public class SubscriptionService {
     }
 
     @Transactional
+    @SuppressWarnings("unchecked")
     public Map<String, Object> verifySubscriptionPayment(UUID appId, UUID subscriptionId) {
         Subscription subscription = subscriptionRepository.findById(subscriptionId)
                 .orElseThrow(() -> new IllegalArgumentException("Subscription not found."));
@@ -996,70 +1003,73 @@ public class SubscriptionService {
                     "message", "Subscription is already active.");
         }
 
-        System.out.println("[Payment Verification] Querying Nomba status for subscription ID: " + subscriptionId);
-        Map<String, Object> txDetails = nombaClientService.fetchCheckoutTransaction("ORDER_REFERENCE",
-                subscriptionId.toString());
+        // nombaReference is the orderReference we passed to Nomba when creating the checkout order
+        String orderReference = subscription.getNombaReference();
+        System.out.println("[VerifyPayment] Querying Nomba for subscription=" + subscriptionId + " orderRef=" + orderReference);
 
-        if (txDetails != null && "00".equals(txDetails.get("code"))) {
-            if (txDetails.get("data") instanceof Map) {
-                Map<String, Object> data = (Map<String, Object>) txDetails.get("data");
-                if (data != null && (Boolean.TRUE.equals(data.get("success"))
-                        || "true".equals(data.get("success").toString()))) {
-                    // Extract amount from order details
-                    BigDecimal amount = BigDecimal.ZERO;
-                    if (data.get("order") instanceof Map) {
-                        Map orderMap = (Map) data.get("order");
-                        if (orderMap.get("amount") != null) {
-                            amount = new BigDecimal(orderMap.get("amount").toString());
-                        }
-                    }
+        // Use /v1/transactions/accounts/single — works in BOTH sandbox and production
+        // (unlike /v1/checkout/transaction which is production-only)
+        Map<String, Object> txResponse = nombaClientService.fetchTransactionByOrderReference(orderReference);
 
-                    // Extract transaction ID / payment reference
-                    String transactionId = null;
-                    if (data.get("transactionDetails") instanceof Map) {
-                        Map txMap = (Map) data.get("transactionDetails");
-                        if (txMap.get("paymentReference") != null) {
-                            transactionId = txMap.get("paymentReference").toString();
-                        }
-                    }
-                    if (transactionId == null) {
-                        transactionId = subscriptionId.toString();
-                    }
+        if (txResponse == null || !"00".equals(txResponse.get("code"))) {
+            String description = txResponse != null && txResponse.get("description") != null
+                    ? txResponse.get("description").toString() : "No response from Nomba";
+            System.out.println("[VerifyPayment] Transaction not found or API error: " + description);
+            return Map.of(
+                    "success", false,
+                    "status", "PENDING",
+                    "message", "Transaction not found on Nomba: " + description,
+                    "nombaResponse", txResponse != null ? txResponse : Map.of());
+        }
 
-                    // Extract tokenKey if card payment was tokenized
-                    String tokenKey = "N/A";
-                    if (data.get("tokenKey") != null) {
-                        tokenKey = data.get("tokenKey").toString();
-                    }
+        Object dataObj = txResponse.get("data");
+        if (!(dataObj instanceof Map)) {
+            return Map.of(
+                    "success", false,
+                    "status", "PENDING",
+                    "message", "Unexpected response structure from Nomba.",
+                    "nombaResponse", txResponse);
+        }
 
-                    System.out.println(
-                            "[Payment Verification] Checkout payment verified successfully on Nomba. Activating subscription...");
-                    processCardPaymentSuccess(subscriptionId.toString(), tokenKey, amount, transactionId);
+        Map<String, Object> data = (Map<String, Object>) dataObj;
+        String txStatus = data.get("status") != null ? data.get("status").toString() : "UNKNOWN";
+        System.out.println("[VerifyPayment] Nomba transaction status: " + txStatus);
 
-                    return Map.of(
-                            "success", true,
-                            "status", "ACTIVE",
-                            "message", "Payment verified. Subscription is now active.",
-                            "nombaDetails", txDetails);
-                } else {
-                    String message = data != null && data.get("message") != null ? data.get("message").toString()
-                            : "Payment not completed yet.";
-                    return Map.of(
-                            "success", false,
-                            "status", "PENDING",
-                            "message", "Transaction found on Nomba, but payment is not successful: " + message,
-                            "nombaDetails", txDetails);
-                }
+        if (!"SUCCESS".equalsIgnoreCase(txStatus)) {
+            return Map.of(
+                    "success", false,
+                    "status", "PENDING",
+                    "message", "Payment not yet successful on Nomba. Current status: " + txStatus,
+                    "nombaResponse", txResponse);
+        }
+
+        // Payment confirmed as SUCCESS — extract amount (Nomba returns NGN decimal, e.g. "202.8")
+        BigDecimal amount = BigDecimal.ZERO;
+        if (data.get("amount") != null) {
+            try {
+                amount = new BigDecimal(data.get("amount").toString());
+            } catch (NumberFormatException e) {
+                System.err.println("[VerifyPayment] Could not parse amount: " + data.get("amount"));
             }
         }
 
-        String description = txDetails != null && txDetails.get("description") != null
-                ? txDetails.get("description").toString()
-                : "Record not found";
+        // Use the Nomba transaction ID from the response as our ledger reference
+        String transactionId = data.get("id") != null ? data.get("id").toString() : orderReference;
+
+        // NOTE: /v1/transactions/accounts/single does NOT return tokenKey.
+        // tokenKey will be delivered by the async payment_success webhook and stored then.
+        // Passing null here is intentional — processCardPaymentSuccess guards against overwriting an existing key.
+        System.out.println("[VerifyPayment] SUCCESS confirmed. Activating subscription. amount=" + amount
+                + " transactionId=" + transactionId + " (tokenKey will arrive via webhook)");
+        processCardPaymentSuccess(orderReference, null, amount, transactionId);
+
         return Map.of(
-                "success", false,
-                "status", "PENDING",
-                "message", "Payment verification failed: " + description,
-                "nombaDetails", txDetails != null ? txDetails : Map.of());
+                "success", true,
+                "status", "ACTIVE",
+                "message", "Payment verified with Nomba. Subscription activated. Card token will be stored when webhook arrives.",
+                "orderReference", orderReference,
+                "transactionId", transactionId,
+                "amount", amount.toPlainString(),
+                "nombaResponse", txResponse);
     }
 }
