@@ -43,13 +43,16 @@ public class SubscriptionService {
     private final WebhookRepository webhookRepository;
     private final WebhookDispatchRepository webhookDispatchRepository;
 
-    @Value("${nomba.callback.url:https://arafi-api.onrender.com/v1/checkout/callback}")
+    // callbackUrl is a BROWSER REDIRECT (not server POST). Nomba appends ?orderReference=xxx
+    // to this URL and redirects the user's browser there after checkout completion.
+    // The frontend /checkout/callback page reads ?orderReference and calls verify-payment.
+    @Value("${nomba.callback.url:https://arafi-platform.vercel.app/checkout/callback}")
     private String nombaCallbackUrl;
 
     @Transactional
     public CustomerResponse createCustomer(UUID appId, CreateCustomerRequest request) {
-        String mode = com.yourara.arafi.security.RequestContext.getMode() != null 
-                ? com.yourara.arafi.security.RequestContext.getMode() 
+        String mode = com.yourara.arafi.security.RequestContext.getMode() != null
+                ? com.yourara.arafi.security.RequestContext.getMode()
                 : "test";
         Customer customer = Customer.builder()
                 .appId(appId)
@@ -129,8 +132,8 @@ public class SubscriptionService {
                 .orElseThrow(() -> new IllegalArgumentException("Customer context not found for this app workspace."));
 
         Plan plan = planRepository.findByIdAndAppId(request.getPlanId(), appId)
-                .orElseThrow(() -> new IllegalArgumentException("Billing plan context not found for this app workspace."));
-
+                .orElseThrow(
+                        () -> new IllegalArgumentException("Billing plan context not found for this app workspace."));
 
         String status = "PENDING";
         String transactionRef = null;
@@ -144,7 +147,9 @@ public class SubscriptionService {
             resolvedRedirectUrl = "https://arafi-platform.vercel.app/checkout/success";
         }
 
-        BigDecimal amountDecimal = BigDecimal.valueOf(plan.getAmountKobo()).divide(BigDecimal.valueOf(100)); // Convert kobo to NGN
+        BigDecimal amountDecimal = BigDecimal.valueOf(plan.getAmountKobo()).divide(BigDecimal.valueOf(100)); // Convert
+                                                                                                             // kobo to
+                                                                                                             // NGN
 
         if ("CARD".equalsIgnoreCase(paymentMethod)) {
             if (tokenKey != null && !tokenKey.isBlank()) {
@@ -153,8 +158,7 @@ public class SubscriptionService {
                         customer.getEmail(),
                         plan.getAmountKobo(),
                         tokenKey,
-                        nombaClientService.getSubAccountId()
-                );
+                        nombaClientService.getSubAccountId());
 
                 if ("success".equals(chargeResult.get("status"))) {
                     status = "ACTIVE";
@@ -170,9 +174,11 @@ public class SubscriptionService {
                             .build();
                     ledgerEntryRepository.save(entry);
 
-                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal, "card", "ACTIVE");
+                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
+                            "card", "ACTIVE");
                 } else {
-                    throw new IllegalStateException("Payment gateway processing failed: " + chargeResult.get("message"));
+                    throw new IllegalStateException(
+                            "Payment gateway processing failed: " + chargeResult.get("message"));
                 }
             } else {
                 // FIRST-TIME USER: No card token saved yet!
@@ -180,25 +186,29 @@ public class SubscriptionService {
                 UUID subId = UUID.randomUUID();
                 String orderReference = subId.toString();
 
+                // nombaCallbackUrl = frontend /checkout/callback page (browser redirect target)
+                // resolvedRedirectUrl is the merchant's final success destination (different concern)
                 Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
                         orderReference,
                         plan.getAmountKobo(),
                         customer.getEmail(),
-                        resolvedRedirectUrl
-                );
+                        nombaCallbackUrl);
 
                 if ("success".equals(checkoutResult.get("status"))) {
                     checkoutUrl = checkoutResult.get("checkoutLink");
                     transactionRef = orderReference;
                 } else {
-                    throw new IllegalStateException("Failed to create checkout order with Nomba: " + checkoutResult.get("message"));
+                    throw new IllegalStateException(
+                            "Failed to create checkout order with Nomba: " + checkoutResult.get("message"));
                 }
             }
 
         } else if ("BANK_TRANSFER".equalsIgnoreCase(paymentMethod)) {
-            // Check if the customer already has an account number from an earlier checkout intent
+            // Check if the customer already has an account number from an earlier checkout
+            // intent
             if (virtualAccountNumber == null || virtualAccountNumber.isBlank()) {
-                // FIRST-TIME USER: Call Nomba out-of-band to allocate a static bank account right now
+                // FIRST-TIME USER: Call Nomba out-of-band to allocate a static bank account
+                // right now
                 String accountRef = "arafi_vban_" + customer.getId().toString();
                 String accountName = "ARAFI * " + customer.getEmail();
                 Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName);
@@ -210,19 +220,21 @@ public class SubscriptionService {
                     customer.setVirtualAccountNumber(virtualAccountNumber);
                     customerRepository.save(customer);
                 } else {
-                    throw new IllegalStateException("Failed to provision static virtual account with Nomba: " + accountDetails.get("message"));
+                    throw new IllegalStateException(
+                            "Failed to provision static virtual account with Nomba: " + accountDetails.get("message"));
                 }
             }
 
             status = "PENDING"; // Remains pending until webhook receiver picks up the transfer credit notice
-            resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal, "bank_transfer", "PENDING");
+            resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
+                    "bank_transfer", "PENDING");
 
         } else {
             throw new IllegalArgumentException("Invalid payment method. Expected 'CARD' or 'BANK_TRANSFER'.");
         }
 
-        String mode = com.yourara.arafi.security.RequestContext.getMode() != null 
-                ? com.yourara.arafi.security.RequestContext.getMode() 
+        String mode = com.yourara.arafi.security.RequestContext.getMode() != null
+                ? com.yourara.arafi.security.RequestContext.getMode()
                 : "test";
         // Provision and save subscription record
         Subscription sub = Subscription.builder()
@@ -239,7 +251,8 @@ public class SubscriptionService {
                 .redirectUrl(resolvedRedirectUrl)
                 .build();
 
-        if ("CARD".equalsIgnoreCase(paymentMethod) && (tokenKey == null || tokenKey.isBlank()) && transactionRef != null) {
+        if ("CARD".equalsIgnoreCase(paymentMethod) && (tokenKey == null || tokenKey.isBlank())
+                && transactionRef != null) {
             try {
                 sub.setId(UUID.fromString(transactionRef));
             } catch (Exception e) {
@@ -260,31 +273,35 @@ public class SubscriptionService {
     @Transactional
     public void processSubscriptionRenewals() {
         System.out.println("Starting Subscription Renewal Worker...");
-        List<Subscription> expiredSubscriptions = subscriptionRepository.findByStatusAndCurrentPeriodEndBefore("ACTIVE", Instant.now());
-        
+        List<Subscription> expiredSubscriptions = subscriptionRepository.findByStatusAndCurrentPeriodEndBefore("ACTIVE",
+                Instant.now());
+
         for (Subscription sub : expiredSubscriptions) {
             try {
                 com.yourara.arafi.security.RequestContext.setContext(sub.getAppId(), sub.getMode());
-                
+
                 if (Boolean.TRUE.equals(sub.getPaused())) {
                     continue;
                 }
-                
+
                 if (Boolean.TRUE.equals(sub.getCancelAtPeriodEnd())) {
                     sub.setStatus("CANCELLED");
                     subscriptionRepository.save(sub);
-                    
+
                     Customer customer = customerRepository.findById(sub.getCustomerId()).orElse(null);
                     if (customer != null) {
                         BigDecimal planAmt = planRepository.findById(sub.getPlanId())
                                 .map(p -> BigDecimal.valueOf(p.getAmountKobo()).divide(BigDecimal.valueOf(100)))
                                 .orElse(BigDecimal.ZERO);
-                        resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(), planAmt, "system (Cancelled at period end)", "CANCELLED");
+                        resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(),
+                                planAmt, "system (Cancelled at period end)", "CANCELLED");
                     }
-                    
+
                     appRepository.findById(sub.getAppId()).ifPresent(app -> {
                         if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                            triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(), sub.getCustomerId(), sub.getPlanId(), null, "CANCELLED", "cancel_at_period_end_fired");
+                            triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
+                                    sub.getCustomerId(), sub.getPlanId(), null, "CANCELLED",
+                                    "cancel_at_period_end_fired");
                         }
                     });
                     System.out.println("Subscription cancelled at period end: " + sub.getId());
@@ -293,30 +310,29 @@ public class SubscriptionService {
 
                 Customer customer = customerRepository.findById(sub.getCustomerId()).orElse(null);
                 Plan plan = planRepository.findById(sub.getPlanId()).orElse(null);
-                
+
                 if (customer == null || plan == null) {
                     System.out.println("Customer or Plan not found for subscription: " + sub.getId());
                     continue;
                 }
-                
+
                 BigDecimal amountDecimal = BigDecimal.valueOf(plan.getAmountKobo()).divide(BigDecimal.valueOf(100));
-                
+
                 boolean isCard = sub.getNombaTokenKey() != null && !sub.getNombaTokenKey().isBlank();
-                
+
                 if (isCard) {
                     Map<String, String> chargeResult = nombaClientService.chargeTokenizedCard(
                             customer.getEmail(),
                             plan.getAmountKobo(),
                             sub.getNombaTokenKey(),
-                            nombaClientService.getSubAccountId()
-                    );
-                    
+                            nombaClientService.getSubAccountId());
+
                     if ("success".equals(chargeResult.get("status"))) {
                         sub.setStatus("ACTIVE");
                         sub.setCurrentPeriodEnd(calculatePeriodEnd(plan.getBillingInterval()));
                         sub.setNombaReference(chargeResult.get("transactionId"));
                         subscriptionRepository.save(sub);
-                        
+
                         LedgerEntry entry = LedgerEntry.builder()
                                 .appId(sub.getAppId())
                                 .bankAccountNumber("N/A (Card Payment)")
@@ -325,12 +341,13 @@ public class SubscriptionService {
                                 .webhookEventId(chargeResult.get("transactionId"))
                                 .build();
                         ledgerEntryRepository.save(entry);
-                        
-                        resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(), amountDecimal, "card", "ACTIVE");
+
+                        resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(),
+                                amountDecimal, "card", "ACTIVE");
                         System.out.println("Successfully renewed card subscription: " + sub.getId());
                     } else {
                         sub.setStatus("EXPIRED");
-                        
+
                         try {
                             String callbackUrl = sub.getRedirectUrl();
                             if (callbackUrl == null || callbackUrl.isBlank()) {
@@ -340,8 +357,7 @@ public class SubscriptionService {
                                     sub.getId().toString(),
                                     plan.getAmountKobo(),
                                     customer.getEmail(),
-                                    callbackUrl
-                            );
+                                    callbackUrl);
                             if ("success".equals(checkoutResult.get("status"))) {
                                 sub.setCheckoutUrl(checkoutResult.get("checkoutLink"));
                                 sub.setNombaReference(sub.getId().toString());
@@ -350,12 +366,14 @@ public class SubscriptionService {
                             System.err.println("Failed to pre-generate recovery checkout order: " + ex.getMessage());
                         }
                         subscriptionRepository.save(sub);
-                        
-                        resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(), amountDecimal, "card (Failed/Expired)", "EXPIRED");
-                        
+
+                        resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(),
+                                amountDecimal, "card (Failed/Expired)", "EXPIRED");
+
                         appRepository.findById(sub.getAppId()).ifPresent(app -> {
                             if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(), sub.getCustomerId(), sub.getPlanId(), null, "EXPIRED", "payment_failed");
+                                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
+                                        sub.getCustomerId(), sub.getPlanId(), null, "EXPIRED", "payment_failed");
                             }
                         });
                         System.out.println("Card subscription charge failed, marked EXPIRED: " + sub.getId());
@@ -363,12 +381,14 @@ public class SubscriptionService {
                 } else {
                     sub.setStatus("EXPIRED");
                     subscriptionRepository.save(sub);
-                    
-                    resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(), amountDecimal, "bank_transfer (Renewal Reminder)", "EXPIRED");
-                    
+
+                    resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(),
+                            amountDecimal, "bank_transfer (Renewal Reminder)", "EXPIRED");
+
                     appRepository.findById(sub.getAppId()).ifPresent(app -> {
                         if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                            triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(), sub.getCustomerId(), sub.getPlanId(), null, "EXPIRED", "payment_failed");
+                            triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
+                                    sub.getCustomerId(), sub.getPlanId(), null, "EXPIRED", "payment_failed");
                         }
                     });
                     System.out.println("Bank Transfer subscription expired, marked EXPIRED: " + sub.getId());
@@ -382,75 +402,111 @@ public class SubscriptionService {
     }
 
     @Transactional
+    @SuppressWarnings("unchecked")
     public void processReceivedWebhooks() {
         List<WebhookEvent> pendingEvents = webhookRepository.findByProcessingStatusAndIsSignatureVerifiedTrue("received");
         if (pendingEvents.isEmpty()) {
+            System.out.println("[WebhookProcessor] No signature-verified events pending.");
             return;
         }
 
-        System.out.println("Processing " + pendingEvents.size() + " pending webhook events...");
+        System.out.println("[WebhookProcessor] Processing " + pendingEvents.size() + " verified event(s)...");
 
         for (WebhookEvent event : pendingEvents) {
             try {
                 Map<String, Object> payloadMap = event.getRawPayload();
                 String eventType = event.getEventType();
-                
+
+                System.out.println("[WebhookProcessor] id=" + event.getId() + " eventType=" + eventType + " nombaId=" + event.getNombaEventId());
+
                 Object dataObj = payloadMap.get("data");
-                if (dataObj instanceof Map) {
-                    Map<String, Object> data = (Map<String, Object>) dataObj;
-                    
-                    Object amountObj = data.get("amount");
-                    BigDecimal amount = null;
-                    if (amountObj instanceof Number) {
-                        amount = new BigDecimal(amountObj.toString());
-                    } else if (amountObj instanceof String) {
-                        amount = new BigDecimal((String) amountObj);
-                    }
-                    
-                    String transactionId = event.getNombaEventId();
-                    if (transactionId == null) {
-                        transactionId = (String) data.get("transactionId");
-                    }
-                    
-                    if ("payment_success".equalsIgnoreCase(eventType) || data.containsKey("tokenKey") || data.containsKey("orderReference")) {
-                        String orderReference = (String) data.get("orderReference");
-                        String tokenKey = null;
-                        if (data.containsKey("tokenKey") && data.get("tokenKey") != null) {
-                            tokenKey = data.get("tokenKey").toString();
-                        } else if (data.containsKey("metadata") && data.get("metadata") instanceof Map) {
-                            Map metadata = (Map) data.get("metadata");
-                            if (metadata.get("tokenKey") != null) {
-                                tokenKey = metadata.get("tokenKey").toString();
-                            }
-                        }
-                        
-                        if (orderReference != null && tokenKey != null && amount != null) {
-                            processCardPaymentSuccess(orderReference, tokenKey, amount, transactionId);
-                        } else {
-                            System.out.println("Card payment success missing required fields in webhook: " + event.getId());
-                        }
-                    } 
-                    else if (data.containsKey("bankAccountNumber")) {
-                        String bankAccountNumber = (String) data.get("bankAccountNumber");
-                        if (bankAccountNumber != null && amount != null) {
-                            processVirtualAccountPayment(bankAccountNumber, amount, transactionId);
-                        } else {
-                            System.out.println("Bank transfer credit missing required fields in webhook: " + event.getId());
-                        }
+                if (!(dataObj instanceof Map)) {
+                    System.out.println("[WebhookProcessor] No 'data' map in payload — marking failed.");
+                    event.setProcessingStatus("failed");
+                    webhookRepository.save(event);
+                    continue;
+                }
+
+                Map<String, Object> data = (Map<String, Object>) dataObj;
+
+                // Nomba payload: amount is at data.transaction.transactionAmount (NOT data.amount)
+                Map<String, Object> transaction = data.get("transaction") instanceof Map
+                        ? (Map<String, Object>) data.get("transaction") : null;
+
+                BigDecimal amount = null;
+                if (transaction != null && transaction.get("transactionAmount") != null) {
+                    try {
+                        amount = new BigDecimal(transaction.get("transactionAmount").toString());
+                    } catch (NumberFormatException nfe) {
+                        System.err.println("[WebhookProcessor] Could not parse transactionAmount: " + transaction.get("transactionAmount"));
                     }
                 }
-                
+
+                String transactionId = event.getNombaEventId();
+                if (transactionId == null && transaction != null && transaction.get("transactionId") != null) {
+                    transactionId = transaction.get("transactionId").toString();
+                }
+
+                if ("payment_success".equalsIgnoreCase(eventType)) {
+
+                    // Determine channel: card tokenization delivers tokenKey at data.tokenizedCardData.tokenKey
+                    Map<String, Object> tokenizedCardData = data.get("tokenizedCardData") instanceof Map
+                            ? (Map<String, Object>) data.get("tokenizedCardData") : null;
+                    String tokenKey = tokenizedCardData != null && tokenizedCardData.get("tokenKey") != null
+                            ? tokenizedCardData.get("tokenKey").toString() : null;
+
+                    if (tokenKey != null) {
+                        // CARD PAYMENT — authoritative tokenKey from HMAC-verified webhook
+                        // requestId maps to our orderReference (stored as nombaReference on the subscription)
+                        String orderReference = (String) payloadMap.get("requestId");
+                        System.out.println("[WebhookProcessor] Card payment + tokenKey detected. orderRef=" + orderReference + " amount=" + amount);
+                        if (orderReference != null && amount != null) {
+                            processCardPaymentSuccess(orderReference, tokenKey, amount, transactionId);
+                        } else {
+                            System.out.println("[WebhookProcessor] Card: missing orderReference or amount.");
+                        }
+
+                    } else if (transaction != null && transaction.get("aliasAccountNumber") != null) {
+                        // BANK TRANSFER — virtual account credit identified by aliasAccountNumber
+                        String aliasAccountNumber = transaction.get("aliasAccountNumber").toString();
+                        System.out.println("[WebhookProcessor] Bank transfer. aliasAccountNumber=" + aliasAccountNumber + " amount=" + amount);
+                        if (amount != null) {
+                            processVirtualAccountPayment(aliasAccountNumber, amount, transactionId);
+                        } else {
+                            System.out.println("[WebhookProcessor] Bank transfer: missing amount.");
+                        }
+
+                    } else {
+                        System.out.println("[WebhookProcessor] payment_success but channel unclear. data keys=" + data.keySet()
+                            + " transaction keys=" + (transaction != null ? transaction.keySet() : "null"));
+                    }
+
+                } else if ("payment_failed".equalsIgnoreCase(eventType)) {
+                    System.out.println("[WebhookProcessor] Payment FAILED for nombaId=" + event.getNombaEventId());
+
+                } else if ("payout_success".equalsIgnoreCase(eventType)
+                        || "payout_failed".equalsIgnoreCase(eventType)
+                        || "payout_refund".equalsIgnoreCase(eventType)) {
+                    System.out.println("[WebhookProcessor] Payout event: " + eventType + " — no handler yet.");
+
+                } else {
+                    System.out.println("[WebhookProcessor] Unhandled eventType='" + eventType + "'");
+                }
+
                 event.setProcessingStatus("processed");
                 webhookRepository.save(event);
+
             } catch (Exception e) {
-                System.err.println("Failed to process WebhookEvent " + event.getId() + ": " + e.getMessage());
+                System.err.println("[WebhookProcessor] Error on event " + event.getId() + ": " + e.getMessage());
+                e.printStackTrace();
                 event.setProcessingStatus("failed");
                 webhookRepository.save(event);
             }
         }
     }
 
-    private void processCardPaymentSuccess(String orderReference, String tokenKey, BigDecimal amount, String transactionId) {
+    private void processCardPaymentSuccess(String orderReference, String tokenKey, BigDecimal amount,
+            String transactionId) {
         Subscription foundSubscription = null;
         try {
             UUID subId = UUID.fromString(orderReference);
@@ -464,7 +520,8 @@ public class SubscriptionService {
 
         if (foundSubscription != null) {
             try {
-                com.yourara.arafi.security.RequestContext.setContext(foundSubscription.getAppId(), foundSubscription.getMode());
+                com.yourara.arafi.security.RequestContext.setContext(foundSubscription.getAppId(),
+                        foundSubscription.getMode());
                 final Subscription subscription = foundSubscription;
                 Customer customer = customerRepository.findById(subscription.getCustomerId()).orElse(null);
                 if (customer != null) {
@@ -475,7 +532,8 @@ public class SubscriptionService {
                 subscription.setStatus("ACTIVE");
                 subscription.setNombaTokenKey(tokenKey);
                 subscription.setNombaReference(transactionId);
-                subscription.setCurrentPeriodEnd(calculatePeriodEnd(planRepository.findById(subscription.getPlanId()).map(Plan::getBillingInterval).orElse("monthly")));
+                subscription.setCurrentPeriodEnd(calculatePeriodEnd(planRepository.findById(subscription.getPlanId())
+                        .map(Plan::getBillingInterval).orElse("monthly")));
                 subscriptionRepository.save(subscription);
 
                 LedgerEntry entry = LedgerEntry.builder()
@@ -489,14 +547,17 @@ public class SubscriptionService {
 
                 appRepository.findById(subscription.getAppId()).ifPresent(app -> {
                     if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                        triggerMerchantCallback(app.getWebhookUrl(), subscription.getId(), subscription.getAppId(), subscription.getCustomerId(), subscription.getPlanId(), amount, "ACTIVE", null);
+                        triggerMerchantCallback(app.getWebhookUrl(), subscription.getId(), subscription.getAppId(),
+                                subscription.getCustomerId(), subscription.getPlanId(), amount, "ACTIVE", null);
                     }
                 });
 
                 if (customer != null) {
-                    resendEmailService.sendBillingAlert(subscription.getAppId(), customer.getEmail(), customer.getEmail(), amount, "card", "ACTIVE");
+                    resendEmailService.sendBillingAlert(subscription.getAppId(), customer.getEmail(),
+                            customer.getEmail(), amount, "card", "ACTIVE");
                 }
-                System.out.println("Card payment processed and vaulted successfully for subscription: " + subscription.getId());
+                System.out.println(
+                        "Card payment processed and vaulted successfully for subscription: " + subscription.getId());
             } finally {
                 com.yourara.arafi.security.RequestContext.clear();
             }
@@ -508,7 +569,8 @@ public class SubscriptionService {
     private void processVirtualAccountPayment(String virtualAccountNumber, BigDecimal amount, String transactionId) {
         List<Subscription> subscriptions = subscriptionRepository.findByVirtualAccountNumber(virtualAccountNumber);
         if (subscriptions.isEmpty()) {
-            throw new IllegalArgumentException("No subscriptions found for virtual account number: " + virtualAccountNumber);
+            throw new IllegalArgumentException(
+                    "No subscriptions found for virtual account number: " + virtualAccountNumber);
         }
 
         Subscription subscription = subscriptions.stream()
@@ -519,12 +581,13 @@ public class SubscriptionService {
         try {
             com.yourara.arafi.security.RequestContext.setContext(subscription.getAppId(), subscription.getMode());
             subscription.setStatus("ACTIVE");
-            
+
             Instant baseTime = Instant.now();
-            if (subscription.getCurrentPeriodEnd() != null && subscription.getCurrentPeriodEnd().isAfter(Instant.now())) {
+            if (subscription.getCurrentPeriodEnd() != null
+                    && subscription.getCurrentPeriodEnd().isAfter(Instant.now())) {
                 baseTime = subscription.getCurrentPeriodEnd();
             }
-            
+
             Plan plan = planRepository.findById(subscription.getPlanId()).orElse(null);
             String interval = plan != null ? plan.getBillingInterval() : "monthly";
             Instant periodEnd = baseTime.plus(30, ChronoUnit.DAYS);
@@ -533,7 +596,7 @@ public class SubscriptionService {
             } else if ("one_time".equalsIgnoreCase(interval)) {
                 periodEnd = baseTime.plus(1, ChronoUnit.DAYS);
             }
-            
+
             subscription.setCurrentPeriodEnd(periodEnd);
             subscription.setNombaReference(transactionId);
             subscriptionRepository.save(subscription);
@@ -549,20 +612,24 @@ public class SubscriptionService {
 
             appRepository.findById(subscription.getAppId()).ifPresent(app -> {
                 if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                    triggerMerchantCallback(app.getWebhookUrl(), subscription.getId(), subscription.getAppId(), subscription.getCustomerId(), subscription.getPlanId(), amount, "ACTIVE", null);
+                    triggerMerchantCallback(app.getWebhookUrl(), subscription.getId(), subscription.getAppId(),
+                            subscription.getCustomerId(), subscription.getPlanId(), amount, "ACTIVE", null);
                 }
             });
 
             customerRepository.findById(subscription.getCustomerId()).ifPresent(customer -> {
-                resendEmailService.sendBillingAlert(subscription.getAppId(), customer.getEmail(), customer.getEmail(), amount, "bank_transfer", "ACTIVE");
+                resendEmailService.sendBillingAlert(subscription.getAppId(), customer.getEmail(), customer.getEmail(),
+                        amount, "bank_transfer", "ACTIVE");
             });
-            System.out.println("Virtual account payment processed successfully for subscription: " + subscription.getId());
+            System.out.println(
+                    "Virtual account payment processed successfully for subscription: " + subscription.getId());
         } finally {
             com.yourara.arafi.security.RequestContext.clear();
         }
     }
 
-    private void triggerMerchantCallback(String webhookUrl, UUID subscriptionId, UUID appId, UUID customerId, UUID planId, BigDecimal amount, String status, String reason) {
+    private void triggerMerchantCallback(String webhookUrl, UUID subscriptionId, UUID appId, UUID customerId,
+            UUID planId, BigDecimal amount, String status, String reason) {
         try {
             Map<String, Object> dataMap = new java.util.HashMap<>();
             dataMap.put("subscriptionId", subscriptionId.toString());
@@ -579,9 +646,8 @@ public class SubscriptionService {
 
             String eventType = "ACTIVE".equalsIgnoreCase(status) ? "subscription.active" : "subscription.expired";
             Map<String, Object> payload = Map.of(
-                "event", eventType,
-                "data", dataMap
-            );
+                    "event", eventType,
+                    "data", dataMap);
 
             WebhookDispatch dispatch = WebhookDispatch.builder()
                     .appId(appId)
@@ -594,7 +660,8 @@ public class SubscriptionService {
                     .build();
 
             webhookDispatchRepository.save(dispatch);
-            System.out.println("Queued merchant webhook callback to outbox for app: " + appId + ", event: " + eventType);
+            System.out
+                    .println("Queued merchant webhook callback to outbox for app: " + appId + ", event: " + eventType);
         } catch (Exception e) {
             System.err.println("Failed to queue merchant callback webhook to " + webhookUrl + ": " + e.getMessage());
         }
@@ -616,11 +683,13 @@ public class SubscriptionService {
         if (immediately) {
             Customer customer = customerRepository.findById(sub.getCustomerId()).orElse(null);
             if (customer != null) {
-                resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), BigDecimal.ZERO, "card/bank", "CANCELLED");
+                resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), BigDecimal.ZERO,
+                        "card/bank", "CANCELLED");
             }
             appRepository.findById(appId).ifPresent(app -> {
                 if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                    triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(), sub.getPlanId(), null, "CANCELLED", "user_cancelled");
+                    triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(),
+                            sub.getPlanId(), null, "CANCELLED", "user_cancelled");
                 }
             });
         }
@@ -639,7 +708,8 @@ public class SubscriptionService {
 
         appRepository.findById(appId).ifPresent(app -> {
             if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(), sub.getPlanId(), null, "PAUSED", "subscription_paused");
+                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(), sub.getPlanId(),
+                        null, "PAUSED", "subscription_paused");
             }
         });
 
@@ -652,7 +722,7 @@ public class SubscriptionService {
                 .orElseThrow(() -> new IllegalArgumentException("Subscription not found in this app workspace."));
 
         sub.setPaused(false);
-        
+
         Customer customer = customerRepository.findById(sub.getCustomerId())
                 .orElseThrow(() -> new IllegalStateException("Customer profile not found."));
         Plan plan = planRepository.findById(sub.getPlanId())
@@ -669,15 +739,14 @@ public class SubscriptionService {
                         customer.getEmail(),
                         plan.getAmountKobo(),
                         sub.getNombaTokenKey(),
-                        nombaClientService.getSubAccountId()
-                );
-                
+                        nombaClientService.getSubAccountId());
+
                 if ("success".equals(chargeResult.get("status"))) {
                     sub.setStatus("ACTIVE");
                     sub.setCurrentPeriodEnd(calculatePeriodEnd(plan.getBillingInterval()));
                     sub.setNombaReference(chargeResult.get("transactionId"));
                     subscriptionRepository.save(sub);
-                    
+
                     LedgerEntry entry = LedgerEntry.builder()
                             .appId(appId)
                             .bankAccountNumber("N/A (Card Payment)")
@@ -686,17 +755,20 @@ public class SubscriptionService {
                             .webhookEventId(chargeResult.get("transactionId"))
                             .build();
                     ledgerEntryRepository.save(entry);
-                    
-                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal, "card", "ACTIVE");
+
+                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
+                            "card", "ACTIVE");
                 } else {
                     sub.setStatus("EXPIRED");
                     subscriptionRepository.save(sub);
-                    throw new IllegalStateException("Failed to charge vaulted card for resuming subscription: " + chargeResult.get("message"));
+                    throw new IllegalStateException(
+                            "Failed to charge vaulted card for resuming subscription: " + chargeResult.get("message"));
                 }
             } else {
                 sub.setStatus("PENDING");
                 subscriptionRepository.save(sub);
-                resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal, "bank_transfer", "PENDING");
+                resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
+                        "bank_transfer", "PENDING");
             }
         }
 
@@ -722,9 +794,12 @@ public class SubscriptionService {
                 .orElseThrow(() -> new IllegalStateException("Customer context not found."));
 
         long creditKobo = 0;
-        if ("ACTIVE".equalsIgnoreCase(sub.getStatus()) && sub.getCurrentPeriodEnd() != null && sub.getCurrentPeriodEnd().isAfter(Instant.now())) {
-            long remainingSeconds = Math.max(0, sub.getCurrentPeriodEnd().getEpochSecond() - Instant.now().getEpochSecond());
-            long totalDurationSeconds = "yearly".equalsIgnoreCase(oldPlan.getBillingInterval()) ? 365 * 86400L : 30 * 86400L;
+        if ("ACTIVE".equalsIgnoreCase(sub.getStatus()) && sub.getCurrentPeriodEnd() != null
+                && sub.getCurrentPeriodEnd().isAfter(Instant.now())) {
+            long remainingSeconds = Math.max(0,
+                    sub.getCurrentPeriodEnd().getEpochSecond() - Instant.now().getEpochSecond());
+            long totalDurationSeconds = "yearly".equalsIgnoreCase(oldPlan.getBillingInterval()) ? 365 * 86400L
+                    : 30 * 86400L;
             double fraction = (double) remainingSeconds / totalDurationSeconds;
             creditKobo = (long) (oldPlan.getAmountKobo() * fraction);
         }
@@ -739,8 +814,7 @@ public class SubscriptionService {
                         customer.getEmail(),
                         amountDueKobo,
                         sub.getNombaTokenKey(),
-                        nombaClientService.getSubAccountId()
-                );
+                        nombaClientService.getSubAccountId());
 
                 if ("success".equals(chargeResult.get("status"))) {
                     sub.setPlanId(newPlanId);
@@ -758,9 +832,11 @@ public class SubscriptionService {
                             .build();
                     ledgerEntryRepository.save(entry);
 
-                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal, "card (Plan Upgrade)", "ACTIVE");
+                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
+                            "card (Plan Upgrade)", "ACTIVE");
                 } else {
-                    throw new IllegalStateException("Failed to process payment upgrade charge on card: " + chargeResult.get("message"));
+                    throw new IllegalStateException(
+                            "Failed to process payment upgrade charge on card: " + chargeResult.get("message"));
                 }
             } else {
                 UUID newSubId = UUID.randomUUID();
@@ -769,13 +845,12 @@ public class SubscriptionService {
                 if (callbackUrl == null || callbackUrl.isBlank()) {
                     callbackUrl = "https://arafi-platform.vercel.app/checkout/success";
                 }
-                
+
                 Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
                         orderReference,
                         amountDueKobo,
                         customer.getEmail(),
-                        callbackUrl
-                );
+                        callbackUrl);
 
                 if ("success".equals(checkoutResult.get("status"))) {
                     sub.setPlanId(newPlanId);
@@ -784,9 +859,11 @@ public class SubscriptionService {
                     sub.setNombaReference(orderReference);
                     subscriptionRepository.save(sub);
 
-                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal, "bank_transfer (Plan Upgrade pending checkout)", "PENDING");
+                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
+                            "bank_transfer (Plan Upgrade pending checkout)", "PENDING");
                 } else {
-                    throw new IllegalStateException("Failed to generate checkout order for plan upgrade: " + checkoutResult.get("message"));
+                    throw new IllegalStateException(
+                            "Failed to generate checkout order for plan upgrade: " + checkoutResult.get("message"));
                 }
             }
         } else {
@@ -795,12 +872,14 @@ public class SubscriptionService {
             sub.setCurrentPeriodEnd(calculatePeriodEnd(newPlan.getBillingInterval()));
             subscriptionRepository.save(sub);
 
-            resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), BigDecimal.ZERO, "system_credit", "ACTIVE");
+            resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), BigDecimal.ZERO,
+                    "system_credit", "ACTIVE");
         }
 
         appRepository.findById(appId).ifPresent(app -> {
             if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(), sub.getPlanId(), null, "ACTIVE", "plan_changed");
+                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(), sub.getPlanId(),
+                        null, "ACTIVE", "plan_changed");
             }
         });
 
@@ -839,8 +918,7 @@ public class SubscriptionService {
                 orderReference,
                 amountKobo,
                 customer.getEmail(),
-                callbackUrl
-        );
+                callbackUrl);
 
         if ("success".equals(checkoutResult.get("status"))) {
             List<Subscription> existingSubs = subscriptionRepository.findByCustomerId(customer.getId());
@@ -852,7 +930,8 @@ public class SubscriptionService {
                 if (!plans.isEmpty()) {
                     planId = plans.get(0).getId();
                 } else {
-                    throw new IllegalStateException("At least one plan must exist in this app workspace to initialize card update.");
+                    throw new IllegalStateException(
+                            "At least one plan must exist in this app workspace to initialize card update.");
                 }
             }
 
@@ -863,7 +942,9 @@ public class SubscriptionService {
                     .status("PENDING")
                     .nombaReference(orderReference)
                     .checkoutUrl(checkoutResult.get("checkoutLink"))
-                    .mode(com.yourara.arafi.security.RequestContext.getMode() != null ? com.yourara.arafi.security.RequestContext.getMode() : "test")
+                    .mode(com.yourara.arafi.security.RequestContext.getMode() != null
+                            ? com.yourara.arafi.security.RequestContext.getMode()
+                            : "test")
                     .redirectUrl(callbackUrl)
                     .build();
             try {
@@ -875,7 +956,8 @@ public class SubscriptionService {
 
             return checkoutResult.get("checkoutLink");
         } else {
-            throw new IllegalStateException("Failed to create tokenization checkout order: " + checkoutResult.get("message"));
+            throw new IllegalStateException(
+                    "Failed to create tokenization checkout order: " + checkoutResult.get("message"));
         }
     }
 
@@ -909,19 +991,20 @@ public class SubscriptionService {
 
         if ("ACTIVE".equalsIgnoreCase(subscription.getStatus())) {
             return Map.of(
-                "success", true,
-                "status", "ACTIVE",
-                "message", "Subscription is already active."
-            );
+                    "success", true,
+                    "status", "ACTIVE",
+                    "message", "Subscription is already active.");
         }
 
         System.out.println("[Payment Verification] Querying Nomba status for subscription ID: " + subscriptionId);
-        Map<String, Object> txDetails = nombaClientService.fetchCheckoutTransaction("ORDER_REFERENCE", subscriptionId.toString());
+        Map<String, Object> txDetails = nombaClientService.fetchCheckoutTransaction("ORDER_REFERENCE",
+                subscriptionId.toString());
 
         if (txDetails != null && "00".equals(txDetails.get("code"))) {
             if (txDetails.get("data") instanceof Map) {
                 Map<String, Object> data = (Map<String, Object>) txDetails.get("data");
-                if (data != null && (Boolean.TRUE.equals(data.get("success")) || "true".equals(data.get("success").toString()))) {
+                if (data != null && (Boolean.TRUE.equals(data.get("success"))
+                        || "true".equals(data.get("success").toString()))) {
                     // Extract amount from order details
                     BigDecimal amount = BigDecimal.ZERO;
                     if (data.get("order") instanceof Map) {
@@ -949,33 +1032,34 @@ public class SubscriptionService {
                         tokenKey = data.get("tokenKey").toString();
                     }
 
-                    System.out.println("[Payment Verification] Checkout payment verified successfully on Nomba. Activating subscription...");
+                    System.out.println(
+                            "[Payment Verification] Checkout payment verified successfully on Nomba. Activating subscription...");
                     processCardPaymentSuccess(subscriptionId.toString(), tokenKey, amount, transactionId);
 
                     return Map.of(
-                        "success", true,
-                        "status", "ACTIVE",
-                        "message", "Payment verified. Subscription is now active.",
-                        "nombaDetails", txDetails
-                    );
+                            "success", true,
+                            "status", "ACTIVE",
+                            "message", "Payment verified. Subscription is now active.",
+                            "nombaDetails", txDetails);
                 } else {
-                    String message = data != null && data.get("message") != null ? data.get("message").toString() : "Payment not completed yet.";
+                    String message = data != null && data.get("message") != null ? data.get("message").toString()
+                            : "Payment not completed yet.";
                     return Map.of(
-                        "success", false,
-                        "status", "PENDING",
-                        "message", "Transaction found on Nomba, but payment is not successful: " + message,
-                        "nombaDetails", txDetails
-                    );
+                            "success", false,
+                            "status", "PENDING",
+                            "message", "Transaction found on Nomba, but payment is not successful: " + message,
+                            "nombaDetails", txDetails);
                 }
             }
         }
 
-        String description = txDetails != null && txDetails.get("description") != null ? txDetails.get("description").toString() : "Record not found";
+        String description = txDetails != null && txDetails.get("description") != null
+                ? txDetails.get("description").toString()
+                : "Record not found";
         return Map.of(
-            "success", false,
-            "status", "PENDING",
-            "message", "Payment verification failed: " + description,
-            "nombaDetails", txDetails != null ? txDetails : Map.of()
-        );
+                "success", false,
+                "status", "PENDING",
+                "message", "Payment verification failed: " + description,
+                "nombaDetails", txDetails != null ? txDetails : Map.of());
     }
 }
