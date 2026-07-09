@@ -38,6 +38,9 @@ public class App {
     @Column(name = "payout_bank_name")
     private String payoutBankName;
 
+    @Column(name = "redirect_url")
+    private String redirectUrl; // Developer's default success page for end-user redirect after payment
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
