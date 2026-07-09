@@ -9,6 +9,7 @@ import com.yourara.arafi.repository.AppRepository;
 import com.yourara.arafi.repository.WebhookRepository;
 import com.yourara.arafi.repository.WebhookDispatchRepository;
 import com.yourara.arafi.repository.CouponRepository;
+import com.yourara.arafi.repository.ProductTransactionRepository;
 import org.springframework.web.client.RestTemplate;
 import com.yourara.arafi.model.request.CreateCustomerRequest;
 import com.yourara.arafi.model.request.CreatePlanRequest;
@@ -46,6 +47,8 @@ public class SubscriptionService {
     private final WebhookRepository webhookRepository;
     private final WebhookDispatchRepository webhookDispatchRepository;
     private final CouponRepository couponRepository;
+    private final ProductTransactionRepository productTransactionRepository;
+    private final ProductService productService;
 
     // callbackUrl is a BROWSER REDIRECT (not server POST). Nomba appends
     // ?orderReference=xxx
@@ -534,6 +537,15 @@ public class SubscriptionService {
                             }
                             if (sub != null && "test".equalsIgnoreCase(sub.getMode())) {
                                 isSandboxEvent = true;
+                            } else {
+                                // Check if it is a product transaction
+                                com.yourara.arafi.model.ProductTransaction ptx = productTransactionRepository.findById(subId).orElse(null);
+                                if (ptx == null) {
+                                    ptx = productTransactionRepository.findByNombaReference(orderReference).orElse(null);
+                                }
+                                if (ptx != null) {
+                                    isSandboxEvent = true;
+                                }
                             }
                         } catch (Exception e) {
                             // Ignored
@@ -605,7 +617,20 @@ public class SubscriptionService {
                         System.out.println("[WebhookProcessor] Card payment + tokenKey detected. orderRef="
                                 + orderReference + " amount=" + amount);
                         if (orderReference != null && amount != null) {
-                            processCardPaymentSuccess(orderReference, tokenKey, amount, transactionId);
+                            boolean isProductTx = false;
+                            try {
+                                UUID txId = UUID.fromString(orderReference);
+                                isProductTx = productTransactionRepository.existsById(txId);
+                            } catch (Exception e) {}
+                            if (!isProductTx) {
+                                isProductTx = productTransactionRepository.findByNombaReference(orderReference).isPresent();
+                            }
+
+                            if (isProductTx) {
+                                productService.publicVerifyProductCardCheckout(orderReference);
+                            } else {
+                                processCardPaymentSuccess(orderReference, tokenKey, amount, transactionId);
+                            }
                         } else {
                             System.out.println("[WebhookProcessor] Card: missing orderReference or amount.");
                         }
@@ -616,7 +641,11 @@ public class SubscriptionService {
                         System.out.println("[WebhookProcessor] Bank transfer. aliasAccountNumber=" + aliasAccountNumber
                                 + " amount=" + amount);
                         if (amount != null) {
-                            processVirtualAccountPayment(aliasAccountNumber, amount, transactionId);
+                            if (productTransactionRepository.findByVirtualAccountNumber(aliasAccountNumber).isPresent()) {
+                                productService.processProductBankTransferPayment(aliasAccountNumber, amount, transactionId);
+                            } else {
+                                processVirtualAccountPayment(aliasAccountNumber, amount, transactionId);
+                            }
                         } else {
                             System.out.println("[WebhookProcessor] Bank transfer: missing amount.");
                         }
