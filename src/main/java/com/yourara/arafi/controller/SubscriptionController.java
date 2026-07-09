@@ -209,4 +209,20 @@ public class SubscriptionController {
             return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
         }
     }
+
+    @GetMapping("/public/verify")
+    @io.swagger.v3.oas.annotations.security.SecurityRequirements // Public — no API key or JWT required
+    @Operation(
+            summary = "Public payment verification (used by checkout callback page)",
+            description = "Verifies a subscription payment using the orderReference from Nomba's callback redirect. " +
+                    "No authentication required. Secured by UUID-based orderReference capability token."
+    )
+    public ResponseEntity<?> publicVerify(@RequestParam String orderReference) {
+        try {
+            java.util.Map<String, Object> result = subscriptionService.verifyPublicSubscriptionPayment(orderReference);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
 }

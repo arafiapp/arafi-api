@@ -144,7 +144,10 @@ public class SubscriptionService {
         String checkoutUrl = null;
         String resolvedRedirectUrl = request.getRedirectUrl();
         if (resolvedRedirectUrl == null || resolvedRedirectUrl.isBlank()) {
-            resolvedRedirectUrl = "https://arafi-platform.vercel.app/checkout/success";
+            // Fall back to the developer's default redirect URL configured on their app
+            App app = appRepository.findById(appId).orElse(null);
+            resolvedRedirectUrl = (app != null && app.getRedirectUrl() != null && !app.getRedirectUrl().isBlank())
+                    ? app.getRedirectUrl() : null;
         }
 
         BigDecimal amountDecimal = BigDecimal.valueOf(plan.getAmountKobo()).divide(BigDecimal.valueOf(100)); // Convert
@@ -348,16 +351,12 @@ public class SubscriptionService {
                     } else {
                         sub.setStatus("EXPIRED");
 
-                        try {
-                            String callbackUrl = sub.getRedirectUrl();
-                            if (callbackUrl == null || callbackUrl.isBlank()) {
-                                callbackUrl = "https://arafi-platform.vercel.app/checkout/success";
-                            }
+                    try {
                             Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
                                     sub.getId().toString(),
                                     plan.getAmountKobo(),
                                     customer.getEmail(),
-                                    callbackUrl);
+                                    nombaCallbackUrl);
                             if ("success".equals(checkoutResult.get("status"))) {
                                 sub.setCheckoutUrl(checkoutResult.get("checkoutLink"));
                                 sub.setNombaReference(sub.getId().toString());
@@ -847,16 +846,11 @@ public class SubscriptionService {
             } else {
                 UUID newSubId = UUID.randomUUID();
                 String orderReference = newSubId.toString();
-                String callbackUrl = sub.getRedirectUrl();
-                if (callbackUrl == null || callbackUrl.isBlank()) {
-                    callbackUrl = "https://arafi-platform.vercel.app/checkout/success";
-                }
-
                 Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
                         orderReference,
                         amountDueKobo,
                         customer.getEmail(),
-                        callbackUrl);
+                        nombaCallbackUrl);
 
                 if ("success".equals(checkoutResult.get("status"))) {
                     sub.setPlanId(newPlanId);
@@ -915,16 +909,11 @@ public class SubscriptionService {
 
         long amountKobo = 1000L; // 10.00 NGN tokenization check
         String orderReference = "card_upd_" + UUID.randomUUID().toString().substring(0, 15);
-        String callbackUrl = redirectUrl;
-        if (callbackUrl == null || callbackUrl.isBlank()) {
-            callbackUrl = "https://arafi-platform.vercel.app/checkout/success";
-        }
-
         Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
                 orderReference,
                 amountKobo,
                 customer.getEmail(),
-                callbackUrl);
+                nombaCallbackUrl);
 
         if ("success".equals(checkoutResult.get("status"))) {
             List<Subscription> existingSubs = subscriptionRepository.findByCustomerId(customer.getId());
@@ -951,7 +940,7 @@ public class SubscriptionService {
                     .mode(com.yourara.arafi.security.RequestContext.getMode() != null
                             ? com.yourara.arafi.security.RequestContext.getMode()
                             : "test")
-                    .redirectUrl(callbackUrl)
+                    .redirectUrl(redirectUrl)
                     .build();
             try {
                 sub.setId(UUID.fromString(orderReference));
@@ -1071,5 +1060,149 @@ public class SubscriptionService {
                 "transactionId", transactionId,
                 "amount", amount.toPlainString(),
                 "nombaResponse", txResponse);
+    }
+
+    /**
+     * Public verification method — called by the checkout callback page (no auth required).
+     * Looks up the subscription by orderReference (the UUID we passed to Nomba),
+     * verifies payment status with Nomba, activates if successful, fires the merchant webhook,
+     * and returns the redirect URL + app/plan details for the frontend to use.
+     */
+    @Transactional
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> verifyPublicSubscriptionPayment(String orderReference) {
+        if (orderReference == null || orderReference.isBlank()) {
+            return Map.of("success", false, "message", "Missing orderReference parameter.");
+        }
+
+        System.out.println("[PublicVerify] Looking up subscription for orderReference=" + orderReference);
+
+        // The orderReference IS the subscription UUID (we set sub.id = orderReference in createSubscription)
+        Subscription subscription = null;
+        try {
+            UUID subId = UUID.fromString(orderReference);
+            subscription = subscriptionRepository.findById(subId).orElse(null);
+        } catch (IllegalArgumentException e) {
+            // Not a valid UUID, try nombaReference lookup
+        }
+        if (subscription == null) {
+            subscription = subscriptionRepository.findByNombaReference(orderReference).orElse(null);
+        }
+
+        if (subscription == null) {
+            System.out.println("[PublicVerify] No subscription found for orderReference=" + orderReference);
+            return Map.of("success", false, "message", "Subscription not found for this order reference.");
+        }
+
+        // Set request context so downstream methods (processCardPaymentSuccess) work correctly
+        com.yourara.arafi.security.RequestContext.setContext(subscription.getAppId(), subscription.getMode());
+
+        // Resolve app and plan details for the frontend receipt
+        App app = appRepository.findById(subscription.getAppId()).orElse(null);
+        Plan plan = planRepository.findById(subscription.getPlanId()).orElse(null);
+        String appName = app != null ? app.getName() : "Unknown App";
+        String planName = plan != null ? plan.getName() : "Unknown Plan";
+        long planAmountKobo = plan != null ? plan.getAmountKobo() : 0;
+        String planAmount = BigDecimal.valueOf(planAmountKobo).divide(BigDecimal.valueOf(100)).toPlainString();
+
+        // If already active, return immediately (idempotent)
+        if ("ACTIVE".equalsIgnoreCase(subscription.getStatus())) {
+            System.out.println("[PublicVerify] Subscription already ACTIVE.");
+            // Resolve redirectUrl: subscription override > app default > null (fallback receipt)
+            String redirectUrl = subscription.getRedirectUrl();
+            if ((redirectUrl == null || redirectUrl.isBlank()) && app != null) {
+                redirectUrl = app.getRedirectUrl();
+            }
+            java.util.HashMap<String, Object> result = new java.util.HashMap<>();
+            result.put("success", true);
+            result.put("status", "ACTIVE");
+            result.put("message", "Subscription is already active.");
+            result.put("appName", appName);
+            result.put("planName", planName);
+            result.put("amount", planAmount);
+            result.put("orderReference", orderReference);
+            result.put("redirectUrl", redirectUrl); // may be null — frontend shows receipt
+            return result;
+        }
+
+        // Query Nomba for transaction status
+        System.out.println("[PublicVerify] Querying Nomba for orderReference=" + orderReference);
+        Map<String, Object> txResponse = nombaClientService.fetchTransactionByOrderReference(orderReference);
+
+        if (txResponse == null || !"00".equals(txResponse.get("code"))) {
+            String description = txResponse != null && txResponse.get("description") != null
+                    ? txResponse.get("description").toString() : "No response from Nomba";
+            System.out.println("[PublicVerify] Nomba lookup failed: " + description);
+            java.util.HashMap<String, Object> result = new java.util.HashMap<>();
+            result.put("success", false);
+            result.put("status", "PENDING");
+            result.put("message", "Transaction not found on Nomba: " + description);
+            result.put("appName", appName);
+            result.put("planName", planName);
+            result.put("amount", planAmount);
+            result.put("orderReference", orderReference);
+            result.put("redirectUrl", null);
+            return result;
+        }
+
+        Object dataObj = txResponse.get("data");
+        if (!(dataObj instanceof Map)) {
+            java.util.HashMap<String, Object> result = new java.util.HashMap<>();
+            result.put("success", false);
+            result.put("status", "PENDING");
+            result.put("message", "Unexpected response structure from Nomba.");
+            result.put("appName", appName);
+            result.put("redirectUrl", null);
+            return result;
+        }
+
+        Map<String, Object> data = (Map<String, Object>) dataObj;
+        String txStatus = data.get("status") != null ? data.get("status").toString() : "UNKNOWN";
+        System.out.println("[PublicVerify] Nomba transaction status: " + txStatus);
+
+        if (!"SUCCESS".equalsIgnoreCase(txStatus)) {
+            java.util.HashMap<String, Object> result = new java.util.HashMap<>();
+            result.put("success", false);
+            result.put("status", "PENDING");
+            result.put("message", "Payment not yet successful. Current status: " + txStatus);
+            result.put("appName", appName);
+            result.put("planName", planName);
+            result.put("amount", planAmount);
+            result.put("orderReference", orderReference);
+            result.put("redirectUrl", null);
+            return result;
+        }
+
+        // SUCCESS — extract amount and activate
+        BigDecimal amount = BigDecimal.ZERO;
+        if (data.get("amount") != null) {
+            try {
+                amount = new BigDecimal(data.get("amount").toString());
+            } catch (NumberFormatException e) {
+                System.err.println("[PublicVerify] Could not parse amount: " + data.get("amount"));
+            }
+        }
+        String transactionId = data.get("id") != null ? data.get("id").toString() : orderReference;
+
+        System.out.println("[PublicVerify] SUCCESS. Activating subscription. amount=" + amount + " txId=" + transactionId);
+        processCardPaymentSuccess(orderReference, null, amount, transactionId);
+
+        // Resolve redirectUrl: subscription override > app default > null
+        String redirectUrl = subscription.getRedirectUrl();
+        if ((redirectUrl == null || redirectUrl.isBlank()) && app != null) {
+            redirectUrl = app.getRedirectUrl();
+        }
+
+        java.util.HashMap<String, Object> result = new java.util.HashMap<>();
+        result.put("success", true);
+        result.put("status", "ACTIVE");
+        result.put("message", "Payment verified. Subscription activated.");
+        result.put("appName", appName);
+        result.put("planName", planName);
+        result.put("amount", amount.toPlainString());
+        result.put("orderReference", orderReference);
+        result.put("transactionId", transactionId);
+        result.put("redirectUrl", redirectUrl); // null = frontend shows branded receipt
+        return result;
     }
 }
