@@ -414,7 +414,7 @@ public class NombaClientService {
                     }
                 }
                 if (bankAccountNumber != null) {
-                    System.out.println("[Nomba Integration] createVirtualAccount Success. accountNumber: " + bankAccountNumber + ", bankName: " + bankName);
+                    System.out.println("[Nomba Integration] TRUTHFUL REAL VIRTUAL ACCOUNT PROVISIONED BY NOMBA: accountNumber=" + bankAccountNumber + ", bankName=" + bankName);
                     return Map.of(
                         "status", "success",
                         "bankAccountNumber", bankAccountNumber,
@@ -423,18 +423,22 @@ public class NombaClientService {
                     );
                 }
             }
-            System.err.println("[Nomba Integration] createVirtualAccount API error response: " + responseBody);
+            System.err.println("[Nomba Integration] TRUTHFUL NOMBA API PROVISIONING FAILED! API error response: " + responseBody);
             String errorMsg = responseBody != null && responseBody.get("description") != null 
                     ? responseBody.get("description").toString() 
                     : "Nomba virtual account creation failed";
+            if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
+                System.out.println("[Nomba Integration] FALLBACK: Profile is test/dev. Generating sandbox dummy account because Nomba API returned error code (00 mismatch).");
+                return provisionSandboxAccount(accountName, accountRef);
+            }
             return Map.of(
                 "status", "failed",
                 "message", errorMsg
             );
         } catch (Exception e) {
-            System.err.println("[Nomba Integration] createVirtualAccount Exception: " + e.getMessage());
+            System.err.println("[Nomba Integration] TRUTHFUL NOMBA API PROVISIONING THREW EXCEPTION: " + e.getMessage());
             if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
-                System.out.println("[Nomba Integration] Profile is test/dev. Fallback to provision sandbox virtual account.");
+                System.out.println("[Nomba Integration] FALLBACK: Profile is test/dev. Generating sandbox dummy account because Nomba API call failed.");
                 return provisionSandboxAccount(accountName, accountRef);
             }
             return Map.of(

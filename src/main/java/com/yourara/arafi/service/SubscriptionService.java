@@ -320,11 +320,9 @@ public class SubscriptionService {
                     }
 
                     appRepository.findById(sub.getAppId()).ifPresent(app -> {
-                        if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                            triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
-                                    sub.getCustomerId(), sub.getPlanId(), null, "CANCELLED",
-                                    "cancel_at_period_end_fired");
-                        }
+                        triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
+                                sub.getCustomerId(), sub.getPlanId(), null, "CANCELLED",
+                                "cancel_at_period_end_fired");
                     });
                     System.out.println("Subscription cancelled at period end: " + sub.getId());
                     continue;
@@ -387,10 +385,8 @@ public class SubscriptionService {
                                 subscriptionRepository.save(sub);
 
                                 appRepository.findById(sub.getAppId()).ifPresent(app -> {
-                                    if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                                        triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
-                                                sub.getCustomerId(), sub.getPlanId(), null, "PAST_DUE", "payment_failed_retrying");
-                                    }
+                                    triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
+                                            sub.getCustomerId(), sub.getPlanId(), null, "PAST_DUE", "payment_failed_retrying");
                                 });
                                 System.out.println("Card charge failed. Subscription transitioned to PAST_DUE (Grace Day 1): " + sub.getId());
                             } else if ("PAST_DUE".equals(sub.getStatus())) {
@@ -424,10 +420,8 @@ public class SubscriptionService {
                             subscriptionRepository.save(sub);
 
                             appRepository.findById(sub.getAppId()).ifPresent(app -> {
-                                if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                                    triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
-                                            sub.getCustomerId(), sub.getPlanId(), null, "PAST_DUE", "payment_failed_retrying");
-                                }
+                                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
+                                        sub.getCustomerId(), sub.getPlanId(), null, "PAST_DUE", "payment_failed_retrying");
                             });
                             System.out.println("Bank Transfer subscription period end. Transitioned to PAST_DUE grace period: " + sub.getId());
                         } else if ("PAST_DUE".equals(sub.getStatus())) {
@@ -479,10 +473,8 @@ public class SubscriptionService {
                 amountDecimal, "card (Failed/Expired)", "EXPIRED", null, null);
 
         appRepository.findById(sub.getAppId()).ifPresent(app -> {
-            if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
-                        sub.getCustomerId(), sub.getPlanId(), null, "EXPIRED", "payment_failed");
-            }
+            triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
+                    sub.getCustomerId(), sub.getPlanId(), null, "EXPIRED", "payment_failed");
         });
         System.out.println("Card/Transfer subscription renewal failed, marked EXPIRED: " + sub.getId());
     }
@@ -665,10 +657,8 @@ public class SubscriptionService {
                 ledgerEntryRepository.save(entry);
 
                 appRepository.findById(subscription.getAppId()).ifPresent(app -> {
-                    if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                        triggerMerchantCallback(app.getWebhookUrl(), subscription.getId(), subscription.getAppId(),
-                                subscription.getCustomerId(), subscription.getPlanId(), amount, "ACTIVE", null);
-                    }
+                    triggerMerchantCallback(app.getWebhookUrl(), subscription.getId(), subscription.getAppId(),
+                            subscription.getCustomerId(), subscription.getPlanId(), amount, "ACTIVE", null);
                 });
 
                 if (customer != null) {
@@ -730,10 +720,8 @@ public class SubscriptionService {
             ledgerEntryRepository.save(entry);
 
             appRepository.findById(subscription.getAppId()).ifPresent(app -> {
-                if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                    triggerMerchantCallback(app.getWebhookUrl(), subscription.getId(), subscription.getAppId(),
-                            subscription.getCustomerId(), subscription.getPlanId(), amount, "ACTIVE", null);
-                }
+                triggerMerchantCallback(app.getWebhookUrl(), subscription.getId(), subscription.getAppId(),
+                        subscription.getCustomerId(), subscription.getPlanId(), amount, "ACTIVE", null);
             });
 
             customerRepository.findById(subscription.getCustomerId()).ifPresent(customer -> {
@@ -809,10 +797,8 @@ public class SubscriptionService {
                         "card/bank", "CANCELLED", null, null);
             }
             appRepository.findById(appId).ifPresent(app -> {
-                if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                    triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(),
-                            sub.getPlanId(), null, "CANCELLED", "user_cancelled");
-                }
+                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(),
+                        sub.getPlanId(), null, "CANCELLED", "user_cancelled");
             });
         }
 
@@ -829,10 +815,8 @@ public class SubscriptionService {
         subscriptionRepository.save(sub);
 
         appRepository.findById(appId).ifPresent(app -> {
-            if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(), sub.getPlanId(),
-                        null, "PAUSED", "subscription_paused");
-            }
+            triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(), sub.getPlanId(),
+                    null, "PAUSED", "subscription_paused");
         });
 
         return mapToResponse(sub);
@@ -994,10 +978,8 @@ public class SubscriptionService {
         }
 
         appRepository.findById(appId).ifPresent(app -> {
-            if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(), sub.getPlanId(),
-                        null, "ACTIVE", "plan_changed");
-            }
+            triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), appId, sub.getCustomerId(), sub.getPlanId(),
+                    null, "ACTIVE", "plan_changed");
         });
 
         return mapToResponse(sub);
@@ -1243,6 +1225,22 @@ public class SubscriptionService {
             result.put("amount", planAmount);
             result.put("orderReference", orderReference);
             result.put("redirectUrl", redirectUrl); // may be null — frontend shows receipt
+            return result;
+        }
+
+        // If the subscription is for a virtual bank account transfer, we do not query the checkout order endpoint
+        // (as it is not a card checkout order, and Nomba sandbox mock-responds SUCCESS for order query).
+        // Instead, we simply return the current DB status (which gets activated via webhook or sandbox simulator).
+        if (subscription.getVirtualAccountNumber() != null && !subscription.getVirtualAccountNumber().isBlank()) {
+            java.util.HashMap<String, Object> result = new java.util.HashMap<>();
+            result.put("success", false);
+            result.put("status", subscription.getStatus());
+            result.put("message", "Awaiting bank transfer credit verification.");
+            result.put("appName", appName);
+            result.put("planName", planName);
+            result.put("amount", planAmount);
+            result.put("orderReference", orderReference);
+            result.put("redirectUrl", null);
             return result;
         }
 
