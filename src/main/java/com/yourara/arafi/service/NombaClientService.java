@@ -1,6 +1,7 @@
 package com.yourara.arafi.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -15,6 +16,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class NombaClientService {
@@ -396,7 +398,7 @@ public class NombaClientService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-        System.out.println("[Nomba Integration] createVirtualAccount. URL: " + url + ", Ref: " + accountRef + ", Name: " + accountName + ", Configured Sub-Account ID: " + subAccountId);
+        log.info("[Nomba Integration] createVirtualAccount. URL: {}, Ref: {}, Name: {}, Configured Sub-Account ID: {}", url, accountRef, accountName, subAccountId);
 
         try {
             ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
@@ -414,7 +416,7 @@ public class NombaClientService {
                     }
                 }
                 if (bankAccountNumber != null) {
-                    System.out.println("[Nomba Integration] TRUTHFUL REAL VIRTUAL ACCOUNT PROVISIONED BY NOMBA: accountNumber=" + bankAccountNumber + ", bankName=" + bankName);
+                    log.info("[Nomba Integration] TRUTHFUL REAL VIRTUAL ACCOUNT PROVISIONED BY NOMBA: accountNumber={}, bankName={}", bankAccountNumber, bankName);
                     return Map.of(
                         "status", "success",
                         "bankAccountNumber", bankAccountNumber,
@@ -423,12 +425,12 @@ public class NombaClientService {
                     );
                 }
             }
-            System.err.println("[Nomba Integration] TRUTHFUL NOMBA API PROVISIONING FAILED! API error response: " + responseBody);
+            log.error("[Nomba Integration] TRUTHFUL NOMBA API PROVISIONING FAILED! API error response: {}", responseBody);
             String errorMsg = responseBody != null && responseBody.get("description") != null 
                     ? responseBody.get("description").toString() 
                     : "Nomba virtual account creation failed";
             if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
-                System.out.println("[Nomba Integration] FALLBACK: Profile is test/dev. Generating sandbox dummy account because Nomba API returned error code (00 mismatch).");
+                log.info("[Nomba Integration] FALLBACK: Profile is test/dev. Generating sandbox dummy account because Nomba API returned error code (00 mismatch).");
                 return provisionSandboxAccount(accountName, accountRef);
             }
             return Map.of(
@@ -436,9 +438,9 @@ public class NombaClientService {
                 "message", errorMsg
             );
         } catch (Exception e) {
-            System.err.println("[Nomba Integration] TRUTHFUL NOMBA API PROVISIONING THREW EXCEPTION: " + e.getMessage());
+            log.error("[Nomba Integration] TRUTHFUL NOMBA API PROVISIONING THREW EXCEPTION: {}", e.getMessage());
             if (environment != null && environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development", "local", "test"))) {
-                System.out.println("[Nomba Integration] FALLBACK: Profile is test/dev. Generating sandbox dummy account because Nomba API call failed.");
+                log.info("[Nomba Integration] FALLBACK: Profile is test/dev. Generating sandbox dummy account because Nomba API call failed.");
                 return provisionSandboxAccount(accountName, accountRef);
             }
             return Map.of(

@@ -17,6 +17,7 @@ import com.yourara.arafi.model.response.CustomerResponse;
 import com.yourara.arafi.model.response.PlanResponse;
 import com.yourara.arafi.model.response.SubscriptionResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SubscriptionService {
@@ -248,6 +250,8 @@ public class SubscriptionService {
                     throw new IllegalStateException(
                             "Failed to provision static virtual account with Nomba: " + accountDetails.get("message"));
                 }
+            } else {
+                log.info("[SubscriptionService] Reusing existing virtual account number from database: {} for customer: {}", virtualAccountNumber, customer.getEmail());
             }
 
             status = "PENDING"; // Remains pending until webhook receiver picks up the transfer credit notice
@@ -1441,6 +1445,8 @@ public class SubscriptionService {
                 } else {
                     throw new IllegalStateException("Nomba virtual account error: " + accountDetails.get("message"));
                 }
+            } else {
+                log.info("[SubscriptionService] Reusing existing virtual account number from database: {} for customer: {} in public checkout.", virtualAccountNumber, customer.getEmail());
             }
 
             sub.setVirtualAccountNumber(virtualAccountNumber);
