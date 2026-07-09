@@ -62,6 +62,7 @@ public class SubscriptionService {
                 : "test";
         Customer customer = Customer.builder()
                 .appId(appId)
+                .name(request.getName())
                 .email(request.getEmail())
                 .externalRef(request.getExternalRef())
                 .mode(mode)
@@ -71,6 +72,7 @@ public class SubscriptionService {
         return CustomerResponse.builder()
                 .id(customer.getId())
                 .appId(customer.getAppId())
+                .name(customer.getName())
                 .email(customer.getEmail())
                 .externalRef(customer.getExternalRef())
                 .createdAt(customer.getCreatedAt())
@@ -82,6 +84,7 @@ public class SubscriptionService {
                 .map(c -> CustomerResponse.builder()
                         .id(c.getId())
                         .appId(c.getAppId())
+                        .name(c.getName())
                         .email(c.getEmail())
                         .externalRef(c.getExternalRef())
                         .createdAt(c.getCreatedAt())
@@ -242,8 +245,10 @@ public class SubscriptionService {
             // intent
             if (virtualAccountNumber == null || virtualAccountNumber.isBlank()) {
                 // Call Nomba out-of-band to allocate a static bank account right now
-                String accountRef = "arafi_vban_" + customer.getId().toString();
-                String accountName = "ARAFI * " + customer.getEmail();
+                String accountRef = "arafi_vban_" + customer.getId().toString() + "_" + System.currentTimeMillis();
+                String accountName = customer.getName() != null && !customer.getName().isBlank()
+                        ? customer.getName()
+                        : "ARAFI " + customer.getEmail();
                 Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName,
                         amountDecimal);
 
@@ -1418,6 +1423,7 @@ public class SubscriptionService {
         result.put("appliedCouponCode", sub.getAppliedCouponCode());
         result.put("interval", plan != null ? plan.getBillingInterval() : "monthly");
         result.put("customerEmail", customer != null ? customer.getEmail() : "N/A");
+        result.put("customerName", customer != null ? customer.getName() : null);
         result.put("virtualAccountNumber", sub.getVirtualAccountNumber());
         result.put("status", sub.getStatus());
         result.put("mode", sub.getMode());
@@ -1485,8 +1491,10 @@ public class SubscriptionService {
             String bankName = "Nomba Bank";
 
             if (virtualAccountNumber == null || virtualAccountNumber.isBlank()) {
-                String accountRef = "arafi_vban_" + customer.getId().toString();
-                String accountName = "ARAFI * " + customer.getEmail();
+                String accountRef = "arafi_vban_" + customer.getId().toString() + "_" + System.currentTimeMillis();
+                String accountName = customer.getName() != null && !customer.getName().isBlank()
+                        ? customer.getName()
+                        : "ARAFI " + customer.getEmail();
                 Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName,
                         amountDecimal);
 
@@ -1514,7 +1522,9 @@ public class SubscriptionService {
             return Map.of(
                     "bankAccountNumber", virtualAccountNumber,
                     "bankName", bankName,
-                    "bankAccountName", "ARAFI * " + customer.getEmail());
+                    "bankAccountName", customer.getName() != null && !customer.getName().isBlank()
+                            ? "ARAFI * " + customer.getName()
+                            : "ARAFI * " + customer.getEmail());
         } finally {
             com.yourara.arafi.security.RequestContext.clear();
         }

@@ -23,6 +23,9 @@ public class Customer {
     @Column(nullable = false)
     private String email;
 
+    @Column(name = "name")
+    private String name;
+
     @Column(name = "external_ref")
     private String externalRef;
 

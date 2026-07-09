@@ -10,6 +10,8 @@ public class CreateCustomerRequest {
 
     private String email;
 
+    private String name;
+
     @JsonProperty("external_ref")
     private String externalRef; // id from the devs app
 }

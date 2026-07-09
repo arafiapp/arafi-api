@@ -19,6 +19,8 @@ public class CustomerResponse {
 
     private String email;
 
+    private String name;
+
     @JsonProperty("external_ref")
     private String externalRef;
 
