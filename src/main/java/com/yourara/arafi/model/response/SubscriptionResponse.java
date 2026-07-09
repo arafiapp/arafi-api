@@ -50,4 +50,16 @@ public class SubscriptionResponse {
 
     @JsonProperty("redirect_url")
     private String redirectUrl;
+
+    @JsonProperty("discount_amount_kobo")
+    private Long discountAmountKobo;
+
+    @JsonProperty("applied_coupon_code")
+    private String appliedCouponCode;
+
+    @JsonProperty("grace_period_start")
+    private Instant gracePeriodStart;
+
+    @JsonProperty("retry_count")
+    private Integer retryCount;
 }

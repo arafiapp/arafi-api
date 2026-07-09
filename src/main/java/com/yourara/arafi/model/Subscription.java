@@ -56,6 +56,18 @@ public class Subscription {
     @Column(name = "paused")
     private Boolean paused;
 
+    @Column(name = "discount_amount_kobo")
+    private Long discountAmountKobo;
+
+    @Column(name = "applied_coupon_code")
+    private String appliedCouponCode;
+
+    @Column(name = "grace_period_start")
+    private Instant gracePeriodStart;
+
+    @Column(name = "retry_count")
+    private Integer retryCount;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -65,5 +77,6 @@ public class Subscription {
         this.createdAt = Instant.now();
         if (this.cancelAtPeriodEnd == null) this.cancelAtPeriodEnd = false;
         if (this.paused == null) this.paused = false;
+        if (this.retryCount == null) this.retryCount = 0;
     }
 }
