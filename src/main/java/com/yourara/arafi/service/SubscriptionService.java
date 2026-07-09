@@ -503,7 +503,7 @@ public class SubscriptionService {
                 String eventType = event.getEventType();
 
                 // Bypasses signature check if we are in sandbox/test mode
-                if (Boolean.FALSE.equals(event.getIsSignatureVerified())) {
+                if (!event.isSignatureVerified()) {
                     String orderReference = (String) payloadMap.get("requestId");
                     boolean isSandboxEvent = false;
                     if (orderReference != null) {

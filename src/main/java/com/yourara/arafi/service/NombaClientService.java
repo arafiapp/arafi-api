@@ -379,6 +379,9 @@ public class NombaClientService {
     public Map<String, String> createVirtualAccount(String accountRef, String accountName) {
         String baseUrl = getBaseUrl();
         String url = baseUrl + "/v1/accounts/virtual";
+        if (subAccountId != null && !subAccountId.isBlank() && !"mock_sub_account_id".equalsIgnoreCase(subAccountId)) {
+            url += "/" + subAccountId;
+        }
 
         Map<String, Object> requestBody = Map.of(
             "accountRef", accountRef,
@@ -393,7 +396,7 @@ public class NombaClientService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-        System.out.println("[Nomba Integration] createVirtualAccount. URL: " + url + ", Ref: " + accountRef + ", Name: " + accountName);
+        System.out.println("[Nomba Integration] createVirtualAccount. URL: " + url + ", Ref: " + accountRef + ", Name: " + accountName + ", Configured Sub-Account ID: " + subAccountId);
 
         try {
             ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
