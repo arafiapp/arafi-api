@@ -31,4 +31,9 @@ public class EmailTemplateService {
 
         return emailTemplateRepository.save(template);
     }
+
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public EmailTemplate getTemplateByAppId(UUID appId) {
+        return emailTemplateRepository.findByAppId(appId).orElse(null);
+    }
 }

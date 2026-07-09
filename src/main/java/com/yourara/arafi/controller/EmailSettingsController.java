@@ -47,4 +47,31 @@ public class EmailSettingsController {
             return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
         }
     }
+
+    @GetMapping
+    @Operation(
+            summary = "Get current email template settings",
+            description = "Retrieves the configured custom template (subject, body HTML string) for the workspace. Requires API key authentication.",
+            security = @SecurityRequirement(name = OpenApiConfig.API_KEY_SCHEME)
+    )
+    public ResponseEntity<?> getTemplate() {
+        UUID appId = RequestContext.getAppId();
+        if (appId == null) {
+            return ResponseEntity.status(401).body(new ErrorResponse("Unauthorized API context. Use Bearer arafi_test_..."));
+        }
+        try {
+            EmailTemplate template = emailTemplateService.getTemplateByAppId(appId);
+            if (template == null) {
+                // Return default layout
+                return ResponseEntity.ok(EmailTemplate.builder()
+                        .appId(appId)
+                        .emailSubject("Subscription Billing Alert")
+                        .emailBodyTemplate("Dear {{customer_name}}, your subscription status is currently updated. Amount: NGN {{amount}}.")
+                        .build());
+            }
+            return ResponseEntity.ok(template);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
 }

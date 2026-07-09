@@ -28,9 +28,16 @@ public class ResendEmailService {
     private String fromEmail;
 
     @Async
-    public void sendBillingAlert(UUID appId, String customerEmail, String customerName, BigDecimal amount, String paymentMethod, String status) {
+    public void sendBillingAlert(UUID appId, String customerEmail, String customerName, BigDecimal amount, String paymentMethod, String status, String bankName, String bankAccountNumber) {
         String subject = "Subscription Billing Alert";
         String body = "Dear customer, your subscription is currently " + status + ". Amount: " + amount + " NGN via " + paymentMethod + ".";
+        if ("bank_transfer".equalsIgnoreCase(paymentMethod) && bankAccountNumber != null) {
+            body = "Dear customer, your subscription is currently " + status + ". Amount: " + amount + " NGN.\n" +
+                   "Please complete your payment by transferring to:\n" +
+                   "Bank Name: " + (bankName != null ? bankName : "WEMA Bank (Nomba Sandbox)") + "\n" +
+                   "Account Number: " + bankAccountNumber + "\n" +
+                   "Account Name: ARAFI * " + (customerName != null ? customerName : customerEmail);
+        }
 
         // Look up the customized template for the target appId. If missing, fallback cleanly to a standard system default text layout.
         EmailTemplate template = emailTemplateRepository.findByAppId(appId).orElse(null);
@@ -47,11 +54,15 @@ public class ResendEmailService {
         
         subject = subject.replace("{{customer_name}}", customerName)
                          .replace("{{amount}}", formattedAmount)
-                         .replace("{{payment_method}}", paymentMethod);
+                         .replace("{{payment_method}}", paymentMethod)
+                         .replace("{{bank_name}}", bankName != null ? bankName : "N/A")
+                         .replace("{{bank_account}}", bankAccountNumber != null ? bankAccountNumber : "N/A");
                          
         body = body.replace("{{customer_name}}", customerName)
                    .replace("{{amount}}", formattedAmount)
-                   .replace("{{payment_method}}", paymentMethod);
+                   .replace("{{payment_method}}", paymentMethod)
+                   .replace("{{bank_name}}", bankName != null ? bankName : "N/A")
+                   .replace("{{bank_account}}", bankAccountNumber != null ? bankAccountNumber : "N/A");
 
         // Issue a standard outbound POST to https://api.resend.com/emails authorized using a Bearer <resend_api_key> header parameter context.
         String url = "https://api.resend.com/emails";

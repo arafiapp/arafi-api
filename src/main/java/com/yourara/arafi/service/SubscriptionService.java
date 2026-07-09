@@ -178,7 +178,7 @@ public class SubscriptionService {
                     ledgerEntryRepository.save(entry);
 
                     resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
-                            "card", "ACTIVE");
+                            "card", "ACTIVE", null, null);
                 } else {
                     throw new IllegalStateException(
                             "Payment gateway processing failed: " + chargeResult.get("message"));
@@ -230,7 +230,7 @@ public class SubscriptionService {
 
             status = "PENDING"; // Remains pending until webhook receiver picks up the transfer credit notice
             resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
-                    "bank_transfer", "PENDING");
+                    "bank_transfer", "PENDING", "WEMA Bank (Nomba Sandbox)", virtualAccountNumber);
 
         } else {
             throw new IllegalArgumentException("Invalid payment method. Expected 'CARD' or 'BANK_TRANSFER'.");
@@ -297,7 +297,7 @@ public class SubscriptionService {
                                 .map(p -> BigDecimal.valueOf(p.getAmountKobo()).divide(BigDecimal.valueOf(100)))
                                 .orElse(BigDecimal.ZERO);
                         resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(),
-                                planAmt, "system (Cancelled at period end)", "CANCELLED");
+                                planAmt, "system (Cancelled at period end)", "CANCELLED", null, null);
                     }
 
                     appRepository.findById(sub.getAppId()).ifPresent(app -> {
@@ -346,7 +346,7 @@ public class SubscriptionService {
                         ledgerEntryRepository.save(entry);
 
                         resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(),
-                                amountDecimal, "card", "ACTIVE");
+                                amountDecimal, "card", "ACTIVE", null, null);
                         System.out.println("Successfully renewed card subscription: " + sub.getId());
                     } else {
                         sub.setStatus("EXPIRED");
@@ -367,7 +367,7 @@ public class SubscriptionService {
                         subscriptionRepository.save(sub);
 
                         resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(),
-                                amountDecimal, "card (Failed/Expired)", "EXPIRED");
+                                amountDecimal, "card (Failed/Expired)", "EXPIRED", null, null);
 
                         appRepository.findById(sub.getAppId()).ifPresent(app -> {
                             if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
@@ -382,7 +382,7 @@ public class SubscriptionService {
                     subscriptionRepository.save(sub);
 
                     resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(),
-                            amountDecimal, "bank_transfer (Renewal Reminder)", "EXPIRED");
+                            amountDecimal, "bank_transfer (Renewal Reminder)", "EXPIRED", "WEMA Bank (Nomba Sandbox)", sub.getVirtualAccountNumber());
 
                     appRepository.findById(sub.getAppId()).ifPresent(app -> {
                         if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
@@ -559,7 +559,7 @@ public class SubscriptionService {
 
                 if (customer != null) {
                     resendEmailService.sendBillingAlert(subscription.getAppId(), customer.getEmail(),
-                            customer.getEmail(), amount, "card", "ACTIVE");
+                            customer.getEmail(), amount, "card", "ACTIVE", null, null);
                 }
                 System.out.println(
                         "Card payment processed and vaulted successfully for subscription: " + subscription.getId());
@@ -624,7 +624,7 @@ public class SubscriptionService {
 
             customerRepository.findById(subscription.getCustomerId()).ifPresent(customer -> {
                 resendEmailService.sendBillingAlert(subscription.getAppId(), customer.getEmail(), customer.getEmail(),
-                        amount, "bank_transfer", "ACTIVE");
+                        amount, "bank_transfer", "ACTIVE", "WEMA Bank (Nomba Sandbox)", virtualAccountNumber);
             });
             System.out.println(
                     "Virtual account payment processed successfully for subscription: " + subscription.getId());
@@ -689,7 +689,7 @@ public class SubscriptionService {
             Customer customer = customerRepository.findById(sub.getCustomerId()).orElse(null);
             if (customer != null) {
                 resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), BigDecimal.ZERO,
-                        "card/bank", "CANCELLED");
+                        "card/bank", "CANCELLED", null, null);
             }
             appRepository.findById(appId).ifPresent(app -> {
                 if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
@@ -762,7 +762,7 @@ public class SubscriptionService {
                     ledgerEntryRepository.save(entry);
 
                     resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
-                            "card", "ACTIVE");
+                            "card", "ACTIVE", null, null);
                 } else {
                     sub.setStatus("EXPIRED");
                     subscriptionRepository.save(sub);
@@ -773,7 +773,7 @@ public class SubscriptionService {
                 sub.setStatus("PENDING");
                 subscriptionRepository.save(sub);
                 resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
-                        "bank_transfer", "PENDING");
+                        "bank_transfer", "PENDING", "WEMA Bank (Nomba Sandbox)", sub.getVirtualAccountNumber());
             }
         }
 
@@ -838,7 +838,7 @@ public class SubscriptionService {
                     ledgerEntryRepository.save(entry);
 
                     resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
-                            "card (Plan Upgrade)", "ACTIVE");
+                            "card (Plan Upgrade)", "ACTIVE", null, null);
                 } else {
                     throw new IllegalStateException(
                             "Failed to process payment upgrade charge on card: " + chargeResult.get("message"));
@@ -860,7 +860,7 @@ public class SubscriptionService {
                     subscriptionRepository.save(sub);
 
                     resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
-                            "bank_transfer (Plan Upgrade pending checkout)", "PENDING");
+                            "bank_transfer (Plan Upgrade pending checkout)", "PENDING", "WEMA Bank (Nomba Sandbox)", sub.getVirtualAccountNumber());
                 } else {
                     throw new IllegalStateException(
                             "Failed to generate checkout order for plan upgrade: " + checkoutResult.get("message"));
@@ -873,7 +873,7 @@ public class SubscriptionService {
             subscriptionRepository.save(sub);
 
             resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), BigDecimal.ZERO,
-                    "system_credit", "ACTIVE");
+                    "system_credit", "ACTIVE", null, null);
         }
 
         appRepository.findById(appId).ifPresent(app -> {
@@ -1204,5 +1204,14 @@ public class SubscriptionService {
         result.put("transactionId", transactionId);
         result.put("redirectUrl", redirectUrl); // null = frontend shows branded receipt
         return result;
+    }
+
+    /**
+     * Simulates a bank transfer payment. Directly invokes processVirtualAccountPayment with a mock transaction ID.
+     */
+    @Transactional
+    public void simulateVirtualAccountTransfer(String virtualAccountNumber, BigDecimal amount) {
+        String mockTxId = "sim_trsf_" + UUID.randomUUID().toString().substring(0, 15);
+        processVirtualAccountPayment(virtualAccountNumber, amount, mockTxId);
     }
 }
