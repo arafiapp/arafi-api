@@ -22,6 +22,7 @@ public class PayoutService {
     private final PayoutRepository payoutRepository;
     private final AppRepository appRepository;
     private final LedgerEntryRepository ledgerEntryRepository;
+    private final NombaClientService nombaClientService;
 
     @Transactional
     public Payout requestPayout(UUID appId, BigDecimal amount, String bankAccountNumber, String bankCode, String bankName) {
@@ -69,6 +70,45 @@ public class PayoutService {
                 .webhookEventId("payout_" + payout.getId())
                 .build();
         ledgerEntryRepository.save(debitEntry);
+
+        // 3. Initiate actual transfer via Nomba API
+        long amountKobo = amount.multiply(BigDecimal.valueOf(100)).longValue();
+        String transferRef = "payout_" + payout.getId();
+
+        try {
+            java.util.Map<String, String> transferResult = nombaClientService.processTransfer(code, accountNumber, amountKobo, transferRef);
+            if ("success".equals(transferResult.get("status"))) {
+                payout.setStatus("SUCCESS");
+                payoutRepository.save(payout);
+            } else {
+                // Transfer failed at Nomba level. Refund the ledger immediately.
+                payout.setStatus("FAILED");
+                payoutRepository.save(payout);
+
+                LedgerEntry refundEntry = LedgerEntry.builder()
+                        .appId(appId)
+                        .bankAccountNumber(accountNumber)
+                        .amount(amount) // Positive amount represents credit refund
+                        .entryType("CREDIT")
+                        .webhookEventId("payout_refund_" + payout.getId())
+                        .build();
+                ledgerEntryRepository.save(refundEntry);
+            }
+        } catch (Exception e) {
+            // Unexpected exception during payout transfer execution. Mark as FAILED and refund.
+            System.err.println("Exception executing payout transfer: " + e.getMessage());
+            payout.setStatus("FAILED");
+            payoutRepository.save(payout);
+
+            LedgerEntry refundEntry = LedgerEntry.builder()
+                    .appId(appId)
+                    .bankAccountNumber(accountNumber)
+                    .amount(amount)
+                    .entryType("CREDIT")
+                    .webhookEventId("payout_refund_" + payout.getId())
+                    .build();
+            ledgerEntryRepository.save(refundEntry);
+        }
 
         return payout;
     }
