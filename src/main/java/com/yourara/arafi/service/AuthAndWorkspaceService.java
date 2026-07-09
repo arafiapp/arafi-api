@@ -207,7 +207,7 @@ public class AuthAndWorkspaceService {
     }
 
     @Transactional
-    public Map<String, Object> updateWebhookSettings(UUID userId, UUID appId, String webhookUrl, boolean rotateSecret) {
+    public Map<String, Object> updateWebhookSettings(UUID userId, UUID appId, String webhookUrl, String redirectUrl, boolean rotateSecret) {
         App app = appRepository.findById(appId)
                 .orElseThrow(() -> new IllegalArgumentException("Workspace not found."));
 
@@ -219,6 +219,10 @@ public class AuthAndWorkspaceService {
             app.setWebhookUrl(webhookUrl);
         }
 
+        if (redirectUrl != null) {
+            app.setRedirectUrl(redirectUrl);
+        }
+
         if (rotateSecret || app.getWebhookSecret() == null) {
             app.setWebhookSecret("arafi_whsec_" + UUID.randomUUID().toString().replace("-", ""));
         }
@@ -228,6 +232,7 @@ public class AuthAndWorkspaceService {
         return Map.of(
             "app_id", app.getId(),
             "webhook_url", app.getWebhookUrl() != null ? app.getWebhookUrl() : "",
+            "redirect_url", app.getRedirectUrl() != null ? app.getRedirectUrl() : "",
             "webhook_secret", app.getWebhookSecret()
         );
     }

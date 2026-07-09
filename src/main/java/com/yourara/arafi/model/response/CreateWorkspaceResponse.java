@@ -24,4 +24,13 @@ public class CreateWorkspaceResponse {
 
     @JsonProperty("live_key")
     private String liveKey;
+
+    @JsonProperty("webhook_url")
+    private String webhookUrl;
+
+    @JsonProperty("redirect_url")
+    private String redirectUrl;
+
+    @JsonProperty("webhook_secret")
+    private String webhookSecret;
 }

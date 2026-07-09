@@ -102,13 +102,14 @@ public class AppWorkspaceController {
 
     @PutMapping("/{appId}/webhook")
     @Operation(
-            summary = "Configure outbound webhook settings for a workspace",
-            description = "Updates the developer callback URL and optionally rotates the webhook signing secret. Requires user authentication context (JWT).",
+            summary = "Configure outbound settings for a workspace",
+            description = "Updates the developer callback URL, the default success redirect URL, and optionally rotates the webhook signing secret. Requires user authentication context (JWT).",
             security = @SecurityRequirement(name = OpenApiConfig.USER_JWT_SCHEME)
     )
     public ResponseEntity<?> updateWorkspaceWebhook(
             @PathVariable UUID appId,
             @RequestParam(required = false) String url,
+            @RequestParam(required = false) String redirectUrl,
             @RequestParam(defaultValue = "false") boolean rotateSecret) {
         try {
             UUID userId = RequestContext.getUserId();
@@ -116,7 +117,7 @@ public class AppWorkspaceController {
                 return ResponseEntity.status(401).body(new com.yourara.arafi.model.response.ErrorResponse("Unauthorized user context."));
             }
 
-            return ResponseEntity.ok(workspaceService.updateWebhookSettings(userId, appId, url, rotateSecret));
+            return ResponseEntity.ok(workspaceService.updateWebhookSettings(userId, appId, url, redirectUrl, rotateSecret));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(new com.yourara.arafi.model.response.ErrorResponse(e.getMessage()));
         }
