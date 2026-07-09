@@ -225,4 +225,25 @@ public class SubscriptionController {
             return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
         }
     }
+
+    @PostMapping("/public/simulate-transfer")
+    @io.swagger.v3.oas.annotations.security.SecurityRequirements // Public — no API key or JWT required
+    @Operation(
+            summary = "Simulate a bank transfer payment to a virtual account (Judge / Demo Mode)",
+            description = "Simulates a virtual account payment credit notification. Activates the subscription, logs credits, and triggers developer webhooks."
+    )
+    public ResponseEntity<?> simulateTransfer(@RequestBody java.util.Map<String, String> request) {
+        String virtualAccountNumber = request.get("virtualAccountNumber");
+        String amountStr = request.get("amount");
+        if (virtualAccountNumber == null || amountStr == null) {
+            return ResponseEntity.badRequest().body(new ErrorResponse("Missing virtualAccountNumber or amount parameters."));
+        }
+        try {
+            java.math.BigDecimal amount = new java.math.BigDecimal(amountStr);
+            subscriptionService.simulateVirtualAccountTransfer(virtualAccountNumber, amount);
+            return ResponseEntity.ok(java.util.Map.of("success", true, "message", "Bank transfer simulated successfully. Subscription activated. Webhooks fired."));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
 }
