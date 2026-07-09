@@ -8,6 +8,7 @@ import com.yourara.arafi.repository.LedgerEntryRepository;
 import com.yourara.arafi.repository.AppRepository;
 import com.yourara.arafi.repository.WebhookRepository;
 import com.yourara.arafi.repository.WebhookDispatchRepository;
+import com.yourara.arafi.repository.CouponRepository;
 import org.springframework.web.client.RestTemplate;
 import com.yourara.arafi.model.request.CreateCustomerRequest;
 import com.yourara.arafi.model.request.CreatePlanRequest;
@@ -42,6 +43,7 @@ public class SubscriptionService {
     private final RestTemplate restTemplate;
     private final WebhookRepository webhookRepository;
     private final WebhookDispatchRepository webhookDispatchRepository;
+    private final CouponRepository couponRepository;
 
     // callbackUrl is a BROWSER REDIRECT (not server POST). Nomba appends ?orderReference=xxx
     // to this URL and redirects the user's browser there after checkout completion.
@@ -90,6 +92,7 @@ public class SubscriptionService {
                 .name(request.getName())
                 .amountKobo(request.getAmountKobo())
                 .billingInterval(request.getInterval())
+                .gracePeriodDays(request.getGracePeriodDays())
                 .build();
         planRepository.save(plan);
 
@@ -99,6 +102,7 @@ public class SubscriptionService {
                 .name(plan.getName())
                 .amountKobo(plan.getAmountKobo())
                 .interval(plan.getBillingInterval())
+                .gracePeriodDays(plan.getGracePeriodDays())
                 .createdAt(plan.getCreatedAt())
                 .build();
     }
@@ -111,6 +115,7 @@ public class SubscriptionService {
                         .name(p.getName())
                         .amountKobo(p.getAmountKobo())
                         .interval(p.getBillingInterval())
+                        .gracePeriodDays(p.getGracePeriodDays())
                         .createdAt(p.getCreatedAt())
                         .build())
                 .collect(Collectors.toList());
@@ -150,16 +155,28 @@ public class SubscriptionService {
                     ? app.getRedirectUrl() : null;
         }
 
-        BigDecimal amountDecimal = BigDecimal.valueOf(plan.getAmountKobo()).divide(BigDecimal.valueOf(100)); // Convert
-                                                                                                             // kobo to
-                                                                                                             // NGN
+        // Resolve coupon discount if specified
+        Long discountKobo = 0L;
+        String couponCode = null;
+        if (request.getCouponCode() != null && !request.getCouponCode().isBlank()) {
+            Coupon coupon = couponRepository.findByAppIdAndCodeAndActiveTrue(appId, request.getCouponCode().toUpperCase().trim())
+                    .orElse(null);
+            if (coupon != null) {
+                discountKobo = coupon.getDiscountAmountKobo();
+                couponCode = coupon.getCode();
+            }
+        }
+
+        long baseAmountKobo = plan.getAmountKobo();
+        long chargeAmountKobo = Math.max(0L, baseAmountKobo - discountKobo);
+        BigDecimal amountDecimal = BigDecimal.valueOf(chargeAmountKobo).divide(BigDecimal.valueOf(100)); // Convert kobo to NGN
 
         if ("CARD".equalsIgnoreCase(paymentMethod)) {
             if (tokenKey != null && !tokenKey.isBlank()) {
                 // RECURRING USER: Programmatic charge via token
                 Map<String, String> chargeResult = nombaClientService.chargeTokenizedCard(
                         customer.getEmail(),
-                        plan.getAmountKobo(),
+                        chargeAmountKobo,
                         tokenKey,
                         nombaClientService.getSubAccountId());
 
@@ -193,7 +210,7 @@ public class SubscriptionService {
                 // resolvedRedirectUrl is the merchant's final success destination (different concern)
                 Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
                         orderReference,
-                        plan.getAmountKobo(),
+                        chargeAmountKobo,
                         customer.getEmail(),
                         nombaCallbackUrl);
 
@@ -252,6 +269,8 @@ public class SubscriptionService {
                 .checkoutUrl(checkoutUrl)
                 .mode(mode)
                 .redirectUrl(resolvedRedirectUrl)
+                .discountAmountKobo(discountKobo)
+                .appliedCouponCode(couponCode)
                 .build();
 
         if ("CARD".equalsIgnoreCase(paymentMethod) && (tokenKey == null || tokenKey.isBlank())
@@ -276,8 +295,8 @@ public class SubscriptionService {
     @Transactional
     public void processSubscriptionRenewals() {
         System.out.println("Starting Subscription Renewal Worker...");
-        List<Subscription> expiredSubscriptions = subscriptionRepository.findByStatusAndCurrentPeriodEndBefore("ACTIVE",
-                Instant.now());
+        List<Subscription> expiredSubscriptions = subscriptionRepository.findByStatusInAndCurrentPeriodEndBefore(
+                List.of("ACTIVE", "PAST_DUE"), Instant.now());
 
         for (Subscription sub : expiredSubscriptions) {
             try {
@@ -289,6 +308,8 @@ public class SubscriptionService {
 
                 if (Boolean.TRUE.equals(sub.getCancelAtPeriodEnd())) {
                     sub.setStatus("CANCELLED");
+                    sub.setGracePeriodStart(null);
+                    sub.setRetryCount(0);
                     subscriptionRepository.save(sub);
 
                     Customer customer = customerRepository.findById(sub.getCustomerId()).orElse(null);
@@ -319,14 +340,17 @@ public class SubscriptionService {
                     continue;
                 }
 
-                BigDecimal amountDecimal = BigDecimal.valueOf(plan.getAmountKobo()).divide(BigDecimal.valueOf(100));
+                // Compute charge amount incorporating coupon discount if present
+                long discountKobo = sub.getDiscountAmountKobo() != null ? sub.getDiscountAmountKobo() : 0L;
+                long chargeAmountKobo = Math.max(0L, plan.getAmountKobo() - discountKobo);
+                BigDecimal amountDecimal = BigDecimal.valueOf(chargeAmountKobo).divide(BigDecimal.valueOf(100));
 
                 boolean isCard = sub.getNombaTokenKey() != null && !sub.getNombaTokenKey().isBlank();
 
                 if (isCard) {
                     Map<String, String> chargeResult = nombaClientService.chargeTokenizedCard(
                             customer.getEmail(),
-                            plan.getAmountKobo(),
+                            chargeAmountKobo,
                             sub.getNombaTokenKey(),
                             nombaClientService.getSubAccountId());
 
@@ -334,6 +358,8 @@ public class SubscriptionService {
                         sub.setStatus("ACTIVE");
                         sub.setCurrentPeriodEnd(calculatePeriodEnd(plan.getBillingInterval()));
                         sub.setNombaReference(chargeResult.get("transactionId"));
+                        sub.setGracePeriodStart(null);
+                        sub.setRetryCount(0);
                         subscriptionRepository.save(sub);
 
                         LedgerEntry entry = LedgerEntry.builder()
@@ -349,55 +375,118 @@ public class SubscriptionService {
                                 amountDecimal, "card", "ACTIVE", null, null);
                         System.out.println("Successfully renewed card subscription: " + sub.getId());
                     } else {
-                        sub.setStatus("EXPIRED");
+                        // Charge failure: resolve grace period
+                        int graceDays = plan.getGracePeriodDays() != null ? plan.getGracePeriodDays() : 0;
+                        int allowedGraceDays = Math.min(7, graceDays);
 
-                    try {
-                            Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
-                                    sub.getId().toString(),
-                                    plan.getAmountKobo(),
-                                    customer.getEmail(),
-                                    nombaCallbackUrl);
-                            if ("success".equals(checkoutResult.get("status"))) {
-                                sub.setCheckoutUrl(checkoutResult.get("checkoutLink"));
-                                sub.setNombaReference(sub.getId().toString());
+                        if (allowedGraceDays > 0) {
+                            if ("ACTIVE".equals(sub.getStatus())) {
+                                // Transition from ACTIVE to PAST_DUE
+                                sub.setStatus("PAST_DUE");
+                                sub.setGracePeriodStart(Instant.now());
+                                sub.setRetryCount(1);
+                                sub.setCurrentPeriodEnd(Instant.now().plus(1, ChronoUnit.DAYS)); // Retry tomorrow
+                                subscriptionRepository.save(sub);
+
+                                appRepository.findById(sub.getAppId()).ifPresent(app -> {
+                                    if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
+                                        triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
+                                                sub.getCustomerId(), sub.getPlanId(), null, "PAST_DUE", "payment_failed_retrying");
+                                    }
+                                });
+                                System.out.println("Card charge failed. Subscription transitioned to PAST_DUE (Grace Day 1): " + sub.getId());
+                            } else if ("PAST_DUE".equals(sub.getStatus())) {
+                                Instant limitInstant = sub.getGracePeriodStart().plus(allowedGraceDays, ChronoUnit.DAYS);
+                                if (Instant.now().isAfter(limitInstant)) {
+                                    // Exceeded grace period
+                                    handleSubscriptionFailure(sub, plan, customer, amountDecimal);
+                                } else {
+                                    sub.setRetryCount((sub.getRetryCount() != null ? sub.getRetryCount() : 0) + 1);
+                                    sub.setCurrentPeriodEnd(Instant.now().plus(1, ChronoUnit.DAYS)); // Retry tomorrow
+                                    subscriptionRepository.save(sub);
+                                    System.out.println("Card charge failed in PAST_DUE state. Rescheduled retry day " + sub.getRetryCount() + " for sub: " + sub.getId());
+                                }
                             }
-                        } catch (Exception ex) {
-                            System.err.println("Failed to pre-generate recovery checkout order: " + ex.getMessage());
+                        } else {
+                            // No grace period
+                            handleSubscriptionFailure(sub, plan, customer, amountDecimal);
                         }
-                        subscriptionRepository.save(sub);
-
-                        resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(),
-                                amountDecimal, "card (Failed/Expired)", "EXPIRED", null, null);
-
-                        appRepository.findById(sub.getAppId()).ifPresent(app -> {
-                            if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
-                                        sub.getCustomerId(), sub.getPlanId(), null, "EXPIRED", "payment_failed");
-                            }
-                        });
-                        System.out.println("Card subscription charge failed, marked EXPIRED: " + sub.getId());
                     }
                 } else {
-                    sub.setStatus("EXPIRED");
-                    subscriptionRepository.save(sub);
+                    // Non-card (Bank Transfer) check grace period
+                    int graceDays = plan.getGracePeriodDays() != null ? plan.getGracePeriodDays() : 0;
+                    int allowedGraceDays = Math.min(7, graceDays);
 
-                    resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(),
-                            amountDecimal, "bank_transfer (Renewal Reminder)", "EXPIRED", "WEMA Bank (Nomba Sandbox)", sub.getVirtualAccountNumber());
+                    if (allowedGraceDays > 0) {
+                        if ("ACTIVE".equals(sub.getStatus())) {
+                            sub.setStatus("PAST_DUE");
+                            sub.setGracePeriodStart(Instant.now());
+                            sub.setRetryCount(1);
+                            sub.setCurrentPeriodEnd(Instant.now().plus(1, ChronoUnit.DAYS));
+                            subscriptionRepository.save(sub);
 
-                    appRepository.findById(sub.getAppId()).ifPresent(app -> {
-                        if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
-                            triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
-                                    sub.getCustomerId(), sub.getPlanId(), null, "EXPIRED", "payment_failed");
+                            appRepository.findById(sub.getAppId()).ifPresent(app -> {
+                                if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
+                                    triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
+                                            sub.getCustomerId(), sub.getPlanId(), null, "PAST_DUE", "payment_failed_retrying");
+                                }
+                            });
+                            System.out.println("Bank Transfer subscription period end. Transitioned to PAST_DUE grace period: " + sub.getId());
+                        } else if ("PAST_DUE".equals(sub.getStatus())) {
+                            Instant limitInstant = sub.getGracePeriodStart().plus(allowedGraceDays, ChronoUnit.DAYS);
+                            if (Instant.now().isAfter(limitInstant)) {
+                                handleSubscriptionFailure(sub, plan, customer, amountDecimal);
+                            } else {
+                                sub.setRetryCount((sub.getRetryCount() != null ? sub.getRetryCount() : 0) + 1);
+                                sub.setCurrentPeriodEnd(Instant.now().plus(1, ChronoUnit.DAYS));
+                                subscriptionRepository.save(sub);
+                            }
                         }
-                    });
-                    System.out.println("Bank Transfer subscription expired, marked EXPIRED: " + sub.getId());
+                    } else {
+                        handleSubscriptionFailure(sub, plan, customer, amountDecimal);
+                    }
                 }
             } catch (Exception e) {
-                System.err.println("Error renewing subscription: " + sub.getId() + ", " + e.getMessage());
+                System.err.println("Error processing subscription renewal for ID " + sub.getId() + ": " + e.getMessage());
             } finally {
                 com.yourara.arafi.security.RequestContext.clear();
             }
         }
+    }
+
+    private void handleSubscriptionFailure(Subscription sub, Plan plan, Customer customer, BigDecimal amountDecimal) {
+        sub.setStatus("EXPIRED");
+        sub.setGracePeriodStart(null);
+        sub.setRetryCount(0);
+
+        try {
+            long discountKobo = sub.getDiscountAmountKobo() != null ? sub.getDiscountAmountKobo() : 0L;
+            long chargeAmountKobo = Math.max(0L, plan.getAmountKobo() - discountKobo);
+
+            Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
+                    sub.getId().toString(),
+                    chargeAmountKobo,
+                    customer.getEmail(),
+                    nombaCallbackUrl);
+            if ("success".equals(checkoutResult.get("status"))) {
+                sub.setCheckoutUrl(checkoutResult.get("checkoutLink"));
+                sub.setNombaReference(sub.getId().toString());
+            }
+        } catch (Exception ex) {
+            System.err.println("Failed to pre-generate recovery checkout order: " + ex.getMessage());
+        }
+        subscriptionRepository.save(sub);
+
+        resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(),
+                amountDecimal, "card (Failed/Expired)", "EXPIRED", null, null);
+
+        appRepository.findById(sub.getAppId()).ifPresent(app -> {
+            if (app.getWebhookUrl() != null && !app.getWebhookUrl().isBlank()) {
+                triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
+                        sub.getCustomerId(), sub.getPlanId(), null, "EXPIRED", "payment_failed");
+            }
+        });
+        System.out.println("Card/Transfer subscription renewal failed, marked EXPIRED: " + sub.getId());
     }
 
     @Transactional
@@ -972,6 +1061,10 @@ public class SubscriptionService {
                 .cancelAtPeriodEnd(sub.getCancelAtPeriodEnd())
                 .paused(sub.getPaused())
                 .redirectUrl(sub.getRedirectUrl())
+                .discountAmountKobo(sub.getDiscountAmountKobo())
+                .appliedCouponCode(sub.getAppliedCouponCode())
+                .gracePeriodStart(sub.getGracePeriodStart())
+                .retryCount(sub.getRetryCount())
                 .build();
     }
 

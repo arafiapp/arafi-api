@@ -24,6 +24,9 @@ public class PlanResponse {
 
     private String interval;
 
+    @JsonProperty("grace_period_days")
+    private Integer gracePeriodDays;
+
     @JsonProperty("created_at")
     private Instant createdAt;
 }

@@ -14,4 +14,7 @@ public class CreatePlanRequest {
     private Long amountKobo;
 
     private String interval; // e.g. monthly, yearly, one_time
+
+    @JsonProperty("grace_period_days")
+    private Integer gracePeriodDays;
 }

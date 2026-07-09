@@ -29,6 +29,9 @@ public class Plan {
     @Column(name = "billing_interval", nullable = false)
     private String billingInterval; // e.g. monthly, yearly, one_time
 
+    @Column(name = "grace_period_days")
+    private Integer gracePeriodDays;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
