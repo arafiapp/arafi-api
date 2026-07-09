@@ -490,18 +490,45 @@ public class SubscriptionService {
     @Transactional
     @SuppressWarnings("unchecked")
     public void processReceivedWebhooks() {
-        List<WebhookEvent> pendingEvents = webhookRepository.findByProcessingStatusAndIsSignatureVerifiedTrue("received");
+        List<WebhookEvent> pendingEvents = webhookRepository.findByProcessingStatus("received");
         if (pendingEvents.isEmpty()) {
-            System.out.println("[WebhookProcessor] No signature-verified events pending.");
             return;
         }
 
-        System.out.println("[WebhookProcessor] Processing " + pendingEvents.size() + " verified event(s)...");
+        System.out.println("[WebhookProcessor] Processing " + pendingEvents.size() + " event(s)...");
 
         for (WebhookEvent event : pendingEvents) {
             try {
                 Map<String, Object> payloadMap = event.getRawPayload();
                 String eventType = event.getEventType();
+
+                // Bypasses signature check if we are in sandbox/test mode
+                if (Boolean.FALSE.equals(event.getIsSignatureVerified())) {
+                    String orderReference = (String) payloadMap.get("requestId");
+                    boolean isSandboxEvent = false;
+                    if (orderReference != null) {
+                        try {
+                            UUID subId = UUID.fromString(orderReference);
+                            Subscription sub = subscriptionRepository.findById(subId).orElse(null);
+                            if (sub == null) {
+                                sub = subscriptionRepository.findByNombaReference(orderReference).orElse(null);
+                            }
+                            if (sub != null && "test".equalsIgnoreCase(sub.getMode())) {
+                                isSandboxEvent = true;
+                            }
+                        } catch (Exception e) {
+                            // Ignored
+                        }
+                    }
+                    if (!isSandboxEvent) {
+                        System.out.println("[WebhookProcessor] Signature verification failed for live event (ID: " + event.getNombaEventId() + "). Skipping.");
+                        event.setProcessingStatus("failed");
+                        webhookRepository.save(event);
+                        continue;
+                    } else {
+                        System.out.println("[WebhookProcessor] Signature verification failed, but bypassing for sandbox/test event (ID: " + event.getNombaEventId() + ").");
+                    }
+                }
 
                 System.out.println("[WebhookProcessor] id=" + event.getId() + " eventType=" + eventType + " nombaId=" + event.getNombaEventId());
 
