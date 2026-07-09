@@ -246,4 +246,49 @@ public class SubscriptionController {
             return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
         }
     }
+
+    @GetMapping("/public/{id}")
+    @io.swagger.v3.oas.annotations.security.SecurityRequirements
+    @Operation(
+            summary = "Get subscription details publicly by ID",
+            description = "Retrieves public details (AppName, PlanName, Amount, CustomerEmail, virtualAccountNumber) of a subscription. Safe for checkout screens."
+    )
+    public ResponseEntity<?> getPublicDetails(@PathVariable UUID id) {
+        try {
+            java.util.Map<String, Object> result = subscriptionService.publicGetSubscriptionDetails(id);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
+    @PostMapping("/public/{id}/card-checkout")
+    @io.swagger.v3.oas.annotations.security.SecurityRequirements
+    @Operation(
+            summary = "Generate Nomba card-only checkout URL for a subscription",
+            description = "Creates a Nomba checkout restricted strictly to cards. Pre-saves the gateway order reference."
+    )
+    public ResponseEntity<?> generateCardCheckout(@PathVariable UUID id) {
+        try {
+            java.util.Map<String, String> result = subscriptionService.publicGenerateCardCheckoutUrl(id);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
+    @PostMapping("/public/{id}/bank-transfer")
+    @io.swagger.v3.oas.annotations.security.SecurityRequirements
+    @Operation(
+            summary = "Provision/get a permanent WEMA virtual account for subscription bank transfers",
+            description = "Allocates a permanent static virtual bank account number for manual subscription renewals."
+    )
+    public ResponseEntity<?> provisionBankTransfer(@PathVariable UUID id) {
+        try {
+            java.util.Map<String, String> result = subscriptionService.publicProvisionBankTransfer(id);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
 }

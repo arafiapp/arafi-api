@@ -140,6 +140,7 @@ public class SubscriptionService {
                 .orElseThrow(
                         () -> new IllegalArgumentException("Billing plan context not found for this app workspace."));
 
+        UUID subId = UUID.randomUUID();
         String status = "PENDING";
         String transactionRef = null;
         String tokenKey = customer.getNombaTokenKey();
@@ -171,7 +172,13 @@ public class SubscriptionService {
         long chargeAmountKobo = Math.max(0L, baseAmountKobo - discountKobo);
         BigDecimal amountDecimal = BigDecimal.valueOf(chargeAmountKobo).divide(BigDecimal.valueOf(100)); // Convert kobo to NGN
 
-        if ("CARD".equalsIgnoreCase(paymentMethod)) {
+        if (paymentMethod == null || paymentMethod.isBlank()) {
+            // Arafi Hosted Checkout Selection Portal routing
+            String frontendBase = nombaCallbackUrl.replace("/checkout/callback", "");
+            checkoutUrl = frontendBase + "/checkout/" + subId.toString();
+            status = "PENDING";
+
+        } else if ("CARD".equalsIgnoreCase(paymentMethod)) {
             if (tokenKey != null && !tokenKey.isBlank()) {
                 // RECURRING USER: Programmatic charge via token
                 Map<String, String> chargeResult = nombaClientService.chargeTokenizedCard(
@@ -203,16 +210,16 @@ public class SubscriptionService {
             } else {
                 // FIRST-TIME USER: No card token saved yet!
                 status = "PENDING";
-                UUID subId = UUID.randomUUID();
                 String orderReference = subId.toString();
 
                 // nombaCallbackUrl = frontend /checkout/callback page (browser redirect target)
-                // resolvedRedirectUrl is the merchant's final success destination (different concern)
+                // Restrict Nomba's checkout options specifically to Card only
                 Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
                         orderReference,
                         chargeAmountKobo,
                         customer.getEmail(),
-                        nombaCallbackUrl);
+                        nombaCallbackUrl,
+                        List.of("Card"));
 
                 if ("success".equals(checkoutResult.get("status"))) {
                     checkoutUrl = checkoutResult.get("checkoutLink");
@@ -224,11 +231,9 @@ public class SubscriptionService {
             }
 
         } else if ("BANK_TRANSFER".equalsIgnoreCase(paymentMethod)) {
-            // Check if the customer already has an account number from an earlier checkout
-            // intent
+            // Check if the customer already has an account number from an earlier checkout intent
             if (virtualAccountNumber == null || virtualAccountNumber.isBlank()) {
-                // FIRST-TIME USER: Call Nomba out-of-band to allocate a static bank account
-                // right now
+                // Call Nomba out-of-band to allocate a static bank account right now
                 String accountRef = "arafi_vban_" + customer.getId().toString();
                 String accountName = "ARAFI * " + customer.getEmail();
                 Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName);
@@ -258,6 +263,7 @@ public class SubscriptionService {
                 : "test";
         // Provision and save subscription record
         Subscription sub = Subscription.builder()
+                .id(subId)
                 .appId(appId)
                 .customerId(customer.getId())
                 .planId(plan.getId())
@@ -273,14 +279,6 @@ public class SubscriptionService {
                 .appliedCouponCode(couponCode)
                 .build();
 
-        if ("CARD".equalsIgnoreCase(paymentMethod) && (tokenKey == null || tokenKey.isBlank())
-                && transactionRef != null) {
-            try {
-                sub.setId(UUID.fromString(transactionRef));
-            } catch (Exception e) {
-                // Ignore
-            }
-        }
         subscriptionRepository.save(sub);
 
         return mapToResponse(sub);
@@ -724,6 +722,9 @@ public class SubscriptionService {
 
     private void triggerMerchantCallback(String webhookUrl, UUID subscriptionId, UUID appId, UUID customerId,
             UUID planId, BigDecimal amount, String status, String reason) {
+        if (webhookUrl == null || webhookUrl.isBlank()) {
+            webhookUrl = "https://mock.arafi.com/webhook-fallback";
+        }
         try {
             Map<String, Object> dataMap = new java.util.HashMap<>();
             dataMap.put("subscriptionId", subscriptionId.toString());
@@ -1306,5 +1307,130 @@ public class SubscriptionService {
     public void simulateVirtualAccountTransfer(String virtualAccountNumber, BigDecimal amount) {
         String mockTxId = "sim_trsf_" + UUID.randomUUID().toString().substring(0, 15);
         processVirtualAccountPayment(virtualAccountNumber, amount, mockTxId);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> publicGetSubscriptionDetails(UUID subscriptionId) {
+        Subscription sub = subscriptionRepository.findById(subscriptionId)
+                .orElseThrow(() -> new IllegalArgumentException("Subscription context not found."));
+
+        App app = appRepository.findById(sub.getAppId()).orElse(null);
+        Plan plan = planRepository.findById(sub.getPlanId()).orElse(null);
+        Customer customer = customerRepository.findById(sub.getCustomerId()).orElse(null);
+
+        String appName = app != null ? app.getName() : "Unknown App";
+        String planName = plan != null ? plan.getName() : "Unknown Plan";
+        long planAmountKobo = plan != null ? plan.getAmountKobo() : 0;
+        long discountAmountKobo = sub.getDiscountAmountKobo() != null ? sub.getDiscountAmountKobo() : 0;
+        long finalAmountKobo = Math.max(0L, planAmountKobo - discountAmountKobo);
+        String finalAmount = BigDecimal.valueOf(finalAmountKobo).divide(BigDecimal.valueOf(100)).toPlainString();
+        String baseAmount = BigDecimal.valueOf(planAmountKobo).divide(BigDecimal.valueOf(100)).toPlainString();
+
+        java.util.HashMap<String, Object> result = new java.util.HashMap<>();
+        result.put("id", sub.getId().toString());
+        result.put("appName", appName);
+        result.put("planName", planName);
+        result.put("baseAmount", baseAmount);
+        result.put("finalAmount", finalAmount);
+        result.put("discountAmount", BigDecimal.valueOf(discountAmountKobo).divide(BigDecimal.valueOf(100)).toPlainString());
+        result.put("appliedCouponCode", sub.getAppliedCouponCode());
+        result.put("interval", plan != null ? plan.getBillingInterval() : "monthly");
+        result.put("customerEmail", customer != null ? customer.getEmail() : "N/A");
+        result.put("virtualAccountNumber", sub.getVirtualAccountNumber());
+        result.put("status", sub.getStatus());
+        result.put("mode", sub.getMode());
+        return result;
+    }
+
+    @Transactional
+    public Map<String, String> publicGenerateCardCheckoutUrl(UUID subscriptionId) {
+        Subscription sub = subscriptionRepository.findById(subscriptionId)
+                .orElseThrow(() -> new IllegalArgumentException("Subscription context not found."));
+
+        Customer customer = customerRepository.findById(sub.getCustomerId())
+                .orElseThrow(() -> new IllegalStateException("Customer profile not found."));
+
+        Plan plan = planRepository.findById(sub.getPlanId())
+                .orElseThrow(() -> new IllegalStateException("Billing plan details not found."));
+
+        long planAmountKobo = plan.getAmountKobo();
+        long discountAmountKobo = sub.getDiscountAmountKobo() != null ? sub.getDiscountAmountKobo() : 0;
+        long finalAmountKobo = Math.max(0L, planAmountKobo - discountAmountKobo);
+
+        com.yourara.arafi.security.RequestContext.setContext(sub.getAppId(), sub.getMode());
+
+        try {
+            Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
+                    sub.getId().toString(),
+                    finalAmountKobo,
+                    customer.getEmail(),
+                    nombaCallbackUrl,
+                    List.of("Card"));
+
+            if ("success".equals(checkoutResult.get("status"))) {
+                sub.setNombaReference(sub.getId().toString());
+                sub.setCheckoutUrl(checkoutResult.get("checkoutLink"));
+                subscriptionRepository.save(sub);
+                return Map.of("checkoutLink", checkoutResult.get("checkoutLink"));
+            } else {
+                throw new IllegalStateException("Nomba checkout processing error: " + checkoutResult.get("message"));
+            }
+        } finally {
+            com.yourara.arafi.security.RequestContext.clear();
+        }
+    }
+
+    @Transactional
+    public Map<String, String> publicProvisionBankTransfer(UUID subscriptionId) {
+        Subscription sub = subscriptionRepository.findById(subscriptionId)
+                .orElseThrow(() -> new IllegalArgumentException("Subscription context not found."));
+
+        Customer customer = customerRepository.findById(sub.getCustomerId())
+                .orElseThrow(() -> new IllegalStateException("Customer profile not found."));
+
+        Plan plan = planRepository.findById(sub.getPlanId())
+                .orElseThrow(() -> new IllegalStateException("Billing plan details not found."));
+
+        long planAmountKobo = plan.getAmountKobo();
+        long discountAmountKobo = sub.getDiscountAmountKobo() != null ? sub.getDiscountAmountKobo() : 0;
+        long finalAmountKobo = Math.max(0L, planAmountKobo - discountAmountKobo);
+        BigDecimal amountDecimal = BigDecimal.valueOf(finalAmountKobo).divide(BigDecimal.valueOf(100));
+
+        com.yourara.arafi.security.RequestContext.setContext(sub.getAppId(), sub.getMode());
+
+        try {
+            String virtualAccountNumber = customer.getVirtualAccountNumber();
+            String bankName = "Nomba Bank";
+
+            if (virtualAccountNumber == null || virtualAccountNumber.isBlank()) {
+                String accountRef = "arafi_vban_" + customer.getId().toString();
+                String accountName = "ARAFI * " + customer.getEmail();
+                Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName);
+
+                if ("success".equals(accountDetails.get("status"))) {
+                    virtualAccountNumber = accountDetails.get("bankAccountNumber");
+                    bankName = accountDetails.get("bankName");
+
+                    customer.setVirtualAccountNumber(virtualAccountNumber);
+                    customerRepository.save(customer);
+                } else {
+                    throw new IllegalStateException("Nomba virtual account error: " + accountDetails.get("message"));
+                }
+            }
+
+            sub.setVirtualAccountNumber(virtualAccountNumber);
+            subscriptionRepository.save(sub);
+
+            resendEmailService.sendBillingAlert(sub.getAppId(), customer.getEmail(), customer.getEmail(),
+                    amountDecimal, "bank_transfer", "PENDING", bankName, virtualAccountNumber);
+
+            return Map.of(
+                    "bankAccountNumber", virtualAccountNumber,
+                    "bankName", bankName,
+                    "bankAccountName", "ARAFI * " + customer.getEmail()
+            );
+        } finally {
+            com.yourara.arafi.security.RequestContext.clear();
+        }
     }
 }

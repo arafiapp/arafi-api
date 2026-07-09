@@ -13,6 +13,7 @@ import org.springframework.core.env.Environment;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -275,6 +276,10 @@ public class NombaClientService {
     }
 
     public Map<String, String> createCheckoutOrder(String orderReference, long amountKobo, String customerEmail, String callbackUrl) {
+        return createCheckoutOrder(orderReference, amountKobo, customerEmail, callbackUrl, null);
+    }
+
+    public Map<String, String> createCheckoutOrder(String orderReference, long amountKobo, String customerEmail, String callbackUrl, List<String> allowedPaymentMethods) {
         String baseUrl = getBaseUrl();
         String path = "/v1/checkout/order";
         String url = baseUrl + path;
@@ -284,10 +289,16 @@ public class NombaClientService {
         orderMap.put("amount", String.format("%.2f", (double) amountKobo / 100)); // Decimal format string (e.g. "5000.00")
         orderMap.put("currency", "NGN");
         orderMap.put("customerId", customerEmail);
+        orderMap.put("customerEmail", customerEmail);
         orderMap.put("callbackUrl", callbackUrl);
-        orderMap.put("tokenizeCard", true);
+        if (allowedPaymentMethods != null && !allowedPaymentMethods.isEmpty()) {
+            orderMap.put("allowedPaymentMethods", allowedPaymentMethods);
+        }
 
-        Map<String, Object> requestBody = Map.of("order", orderMap);
+        Map<String, Object> requestBody = Map.of(
+            "order", orderMap,
+            "tokenizeCard", true
+        );
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("Authorization", "Bearer " + getAuthToken());
