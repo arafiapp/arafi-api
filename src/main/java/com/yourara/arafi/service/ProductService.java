@@ -272,8 +272,12 @@ public class ProductService {
         // Verify with Nomba
         com.yourara.arafi.security.RequestContext.setContext(ptx.getAppId(), "TEST");
         try {
-            Map<String, String> details = nombaClientService.getCheckoutOrderDetails(orderReference);
-            String orderStatus = details.get("status");
+            Map<String, Object> details = nombaClientService.fetchTransactionByOrderReference(orderReference);
+            String orderStatus = "UNKNOWN";
+            if (details != null && "00".equals(details.get("code")) && details.get("data") instanceof Map) {
+                Map<String, Object> data = (Map<String, Object>) details.get("data");
+                orderStatus = data.get("status") != null ? data.get("status").toString() : "UNKNOWN";
+            }
 
             if ("SUCCESS".equalsIgnoreCase(orderStatus) || "PAID".equalsIgnoreCase(orderStatus)) {
                 ptx.setStatus("SUCCESS");

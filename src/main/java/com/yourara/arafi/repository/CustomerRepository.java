@@ -9,4 +9,5 @@ import java.util.List;
 public interface CustomerRepository extends JpaRepository<Customer, UUID> {
     Optional<Customer> findByIdAndAppId(UUID id, UUID appId);
     List<Customer> findByAppId(UUID appId);
+    Optional<Customer> findByAppIdAndEmail(UUID appId, String email);
 }
