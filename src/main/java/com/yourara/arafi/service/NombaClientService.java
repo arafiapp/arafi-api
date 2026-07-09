@@ -379,17 +379,39 @@ public class NombaClientService {
     }
 
     public Map<String, String> createVirtualAccount(String accountRef, String accountName) {
+        return createVirtualAccount(accountRef, accountName, null);
+    }
+
+    public Map<String, String> createVirtualAccount(String accountRef, String accountName, java.math.BigDecimal expectedAmount) {
         String baseUrl = getBaseUrl();
         String url = baseUrl + "/v1/accounts/virtual";
         if (subAccountId != null && !subAccountId.isBlank() && !"mock_sub_account_id".equalsIgnoreCase(subAccountId)) {
             url += "/" + subAccountId;
         }
 
-        Map<String, Object> requestBody = Map.of(
-            "accountRef", accountRef,
-            "accountName", accountName,
-            "currency", "NGN"
-        );
+        // Nomba does not allow special characters in accountName. Let's sanitize it.
+        String sanitizedAccountName = accountName;
+        if (sanitizedAccountName != null) {
+            sanitizedAccountName = sanitizedAccountName.replaceAll("[^a-zA-Z0-9 ]", "").replaceAll("\\s+", " ").trim();
+            if (sanitizedAccountName.isEmpty()) {
+                sanitizedAccountName = "ARAFI Customer";
+            }
+        } else {
+            sanitizedAccountName = "ARAFI Customer";
+        }
+
+        Map<String, Object> requestBody = new java.util.HashMap<>();
+        requestBody.put("accountRef", accountRef);
+        requestBody.put("accountName", sanitizedAccountName);
+        requestBody.put("currency", "NGN");
+        if (expectedAmount != null && expectedAmount.compareTo(java.math.BigDecimal.ZERO) > 0) {
+            // Cap expectedAmount at 150.00 if in sandbox/test mode to satisfy Nomba sandbox constraints
+            if (url.contains("sandbox.nomba.com") && expectedAmount.compareTo(new java.math.BigDecimal("150.0")) > 0) {
+                requestBody.put("expectedAmount", new java.math.BigDecimal("150.00"));
+            } else {
+                requestBody.put("expectedAmount", expectedAmount);
+            }
+        }
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("Authorization", "Bearer " + getAuthToken());
@@ -398,7 +420,7 @@ public class NombaClientService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-        log.info("[Nomba Integration] createVirtualAccount. URL: {}, Ref: {}, Name: {}, Configured Sub-Account ID: {}", url, accountRef, accountName, subAccountId);
+        log.info("[Nomba Integration] createVirtualAccount. URL: {}, Ref: {}, Sanitized Name: {}, Configured Sub-Account ID: {}, Expected Amount: {}", url, accountRef, sanitizedAccountName, subAccountId, expectedAmount);
 
         try {
             ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);

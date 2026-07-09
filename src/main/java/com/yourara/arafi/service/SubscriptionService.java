@@ -238,7 +238,7 @@ public class SubscriptionService {
                 // Call Nomba out-of-band to allocate a static bank account right now
                 String accountRef = "arafi_vban_" + customer.getId().toString();
                 String accountName = "ARAFI * " + customer.getEmail();
-                Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName);
+                Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName, amountDecimal);
 
                 if ("success".equals(accountDetails.get("status"))) {
                     virtualAccountNumber = accountDetails.get("bankAccountNumber");
@@ -1434,7 +1434,7 @@ public class SubscriptionService {
             if (virtualAccountNumber == null || virtualAccountNumber.isBlank()) {
                 String accountRef = "arafi_vban_" + customer.getId().toString();
                 String accountName = "ARAFI * " + customer.getEmail();
-                Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName);
+                Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName, amountDecimal);
 
                 if ("success".equals(accountDetails.get("status"))) {
                     virtualAccountNumber = accountDetails.get("bankAccountNumber");
