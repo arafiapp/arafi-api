@@ -430,7 +430,9 @@ public class NombaClientService {
                 String bankName = null;
                 if (responseBody.get("data") instanceof Map) {
                     Map dataMap = (Map) responseBody.get("data");
-                    if (dataMap.get("accountNumber") != null) {
+                    if (dataMap.get("bankAccountNumber") != null) {
+                        bankAccountNumber = dataMap.get("bankAccountNumber").toString();
+                    } else if (dataMap.get("accountNumber") != null) {
                         bankAccountNumber = dataMap.get("accountNumber").toString();
                     }
                     if (dataMap.get("bankName") != null) {

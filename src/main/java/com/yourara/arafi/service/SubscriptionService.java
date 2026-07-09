@@ -47,9 +47,11 @@ public class SubscriptionService {
     private final WebhookDispatchRepository webhookDispatchRepository;
     private final CouponRepository couponRepository;
 
-    // callbackUrl is a BROWSER REDIRECT (not server POST). Nomba appends ?orderReference=xxx
+    // callbackUrl is a BROWSER REDIRECT (not server POST). Nomba appends
+    // ?orderReference=xxx
     // to this URL and redirects the user's browser there after checkout completion.
-    // The frontend /checkout/callback page reads ?orderReference and calls verify-payment.
+    // The frontend /checkout/callback page reads ?orderReference and calls
+    // verify-payment.
     @Value("${nomba.callback.url:https://arafi-platform.vercel.app/checkout/callback}")
     private String nombaCallbackUrl;
 
@@ -155,14 +157,16 @@ public class SubscriptionService {
             // Fall back to the developer's default redirect URL configured on their app
             App app = appRepository.findById(appId).orElse(null);
             resolvedRedirectUrl = (app != null && app.getRedirectUrl() != null && !app.getRedirectUrl().isBlank())
-                    ? app.getRedirectUrl() : null;
+                    ? app.getRedirectUrl()
+                    : null;
         }
 
         // Resolve coupon discount if specified
         Long discountKobo = 0L;
         String couponCode = null;
         if (request.getCouponCode() != null && !request.getCouponCode().isBlank()) {
-            Coupon coupon = couponRepository.findByAppIdAndCodeAndActiveTrue(appId, request.getCouponCode().toUpperCase().trim())
+            Coupon coupon = couponRepository
+                    .findByAppIdAndCodeAndActiveTrue(appId, request.getCouponCode().toUpperCase().trim())
                     .orElse(null);
             if (coupon != null) {
                 discountKobo = coupon.getDiscountAmountKobo();
@@ -172,7 +176,8 @@ public class SubscriptionService {
 
         long baseAmountKobo = plan.getAmountKobo();
         long chargeAmountKobo = Math.max(0L, baseAmountKobo - discountKobo);
-        BigDecimal amountDecimal = BigDecimal.valueOf(chargeAmountKobo).divide(BigDecimal.valueOf(100)); // Convert kobo to NGN
+        BigDecimal amountDecimal = BigDecimal.valueOf(chargeAmountKobo).divide(BigDecimal.valueOf(100)); // Convert kobo
+                                                                                                         // to NGN
 
         if (paymentMethod == null || paymentMethod.isBlank()) {
             // Arafi Hosted Checkout Selection Portal routing
@@ -233,12 +238,14 @@ public class SubscriptionService {
             }
 
         } else if ("BANK_TRANSFER".equalsIgnoreCase(paymentMethod)) {
-            // Check if the customer already has an account number from an earlier checkout intent
+            // Check if the customer already has an account number from an earlier checkout
+            // intent
             if (virtualAccountNumber == null || virtualAccountNumber.isBlank()) {
                 // Call Nomba out-of-band to allocate a static bank account right now
                 String accountRef = "arafi_vban_" + customer.getId().toString();
                 String accountName = "ARAFI * " + customer.getEmail();
-                Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName, amountDecimal);
+                Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName,
+                        amountDecimal);
 
                 if ("success".equals(accountDetails.get("status"))) {
                     virtualAccountNumber = accountDetails.get("bankAccountNumber");
@@ -251,7 +258,9 @@ public class SubscriptionService {
                             "Failed to provision static virtual account with Nomba: " + accountDetails.get("message"));
                 }
             } else {
-                log.info("[SubscriptionService] Reusing existing virtual account number from database: {} for customer: {}", virtualAccountNumber, customer.getEmail());
+                log.info(
+                        "[SubscriptionService] Reusing existing virtual account number from database: {} for customer: {}",
+                        virtualAccountNumber, customer.getEmail());
             }
 
             status = "PENDING"; // Remains pending until webhook receiver picks up the transfer credit notice
@@ -390,11 +399,15 @@ public class SubscriptionService {
 
                                 appRepository.findById(sub.getAppId()).ifPresent(app -> {
                                     triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
-                                            sub.getCustomerId(), sub.getPlanId(), null, "PAST_DUE", "payment_failed_retrying");
+                                            sub.getCustomerId(), sub.getPlanId(), null, "PAST_DUE",
+                                            "payment_failed_retrying");
                                 });
-                                System.out.println("Card charge failed. Subscription transitioned to PAST_DUE (Grace Day 1): " + sub.getId());
+                                System.out.println(
+                                        "Card charge failed. Subscription transitioned to PAST_DUE (Grace Day 1): "
+                                                + sub.getId());
                             } else if ("PAST_DUE".equals(sub.getStatus())) {
-                                Instant limitInstant = sub.getGracePeriodStart().plus(allowedGraceDays, ChronoUnit.DAYS);
+                                Instant limitInstant = sub.getGracePeriodStart().plus(allowedGraceDays,
+                                        ChronoUnit.DAYS);
                                 if (Instant.now().isAfter(limitInstant)) {
                                     // Exceeded grace period
                                     handleSubscriptionFailure(sub, plan, customer, amountDecimal);
@@ -402,7 +415,8 @@ public class SubscriptionService {
                                     sub.setRetryCount((sub.getRetryCount() != null ? sub.getRetryCount() : 0) + 1);
                                     sub.setCurrentPeriodEnd(Instant.now().plus(1, ChronoUnit.DAYS)); // Retry tomorrow
                                     subscriptionRepository.save(sub);
-                                    System.out.println("Card charge failed in PAST_DUE state. Rescheduled retry day " + sub.getRetryCount() + " for sub: " + sub.getId());
+                                    System.out.println("Card charge failed in PAST_DUE state. Rescheduled retry day "
+                                            + sub.getRetryCount() + " for sub: " + sub.getId());
                                 }
                             }
                         } else {
@@ -425,9 +439,12 @@ public class SubscriptionService {
 
                             appRepository.findById(sub.getAppId()).ifPresent(app -> {
                                 triggerMerchantCallback(app.getWebhookUrl(), sub.getId(), sub.getAppId(),
-                                        sub.getCustomerId(), sub.getPlanId(), null, "PAST_DUE", "payment_failed_retrying");
+                                        sub.getCustomerId(), sub.getPlanId(), null, "PAST_DUE",
+                                        "payment_failed_retrying");
                             });
-                            System.out.println("Bank Transfer subscription period end. Transitioned to PAST_DUE grace period: " + sub.getId());
+                            System.out.println(
+                                    "Bank Transfer subscription period end. Transitioned to PAST_DUE grace period: "
+                                            + sub.getId());
                         } else if ("PAST_DUE".equals(sub.getStatus())) {
                             Instant limitInstant = sub.getGracePeriodStart().plus(allowedGraceDays, ChronoUnit.DAYS);
                             if (Instant.now().isAfter(limitInstant)) {
@@ -443,7 +460,8 @@ public class SubscriptionService {
                     }
                 }
             } catch (Exception e) {
-                System.err.println("Error processing subscription renewal for ID " + sub.getId() + ": " + e.getMessage());
+                System.err
+                        .println("Error processing subscription renewal for ID " + sub.getId() + ": " + e.getMessage());
             } finally {
                 com.yourara.arafi.security.RequestContext.clear();
             }
@@ -517,16 +535,20 @@ public class SubscriptionService {
                         }
                     }
                     if (!isSandboxEvent) {
-                        System.out.println("[WebhookProcessor] Signature verification failed for live event (ID: " + event.getNombaEventId() + "). Skipping.");
+                        System.out.println("[WebhookProcessor] Signature verification failed for live event (ID: "
+                                + event.getNombaEventId() + "). Skipping.");
                         event.setProcessingStatus("failed");
                         webhookRepository.save(event);
                         continue;
                     } else {
-                        System.out.println("[WebhookProcessor] Signature verification failed, but bypassing for sandbox/test event (ID: " + event.getNombaEventId() + ").");
+                        System.out.println(
+                                "[WebhookProcessor] Signature verification failed, but bypassing for sandbox/test event (ID: "
+                                        + event.getNombaEventId() + ").");
                     }
                 }
 
-                System.out.println("[WebhookProcessor] id=" + event.getId() + " eventType=" + eventType + " nombaId=" + event.getNombaEventId());
+                System.out.println("[WebhookProcessor] id=" + event.getId() + " eventType=" + eventType + " nombaId="
+                        + event.getNombaEventId());
 
                 Object dataObj = payloadMap.get("data");
                 if (!(dataObj instanceof Map)) {
@@ -538,16 +560,19 @@ public class SubscriptionService {
 
                 Map<String, Object> data = (Map<String, Object>) dataObj;
 
-                // Nomba payload: amount is at data.transaction.transactionAmount (NOT data.amount)
+                // Nomba payload: amount is at data.transaction.transactionAmount (NOT
+                // data.amount)
                 Map<String, Object> transaction = data.get("transaction") instanceof Map
-                        ? (Map<String, Object>) data.get("transaction") : null;
+                        ? (Map<String, Object>) data.get("transaction")
+                        : null;
 
                 BigDecimal amount = null;
                 if (transaction != null && transaction.get("transactionAmount") != null) {
                     try {
                         amount = new BigDecimal(transaction.get("transactionAmount").toString());
                     } catch (NumberFormatException nfe) {
-                        System.err.println("[WebhookProcessor] Could not parse transactionAmount: " + transaction.get("transactionAmount"));
+                        System.err.println("[WebhookProcessor] Could not parse transactionAmount: "
+                                + transaction.get("transactionAmount"));
                     }
                 }
 
@@ -558,17 +583,22 @@ public class SubscriptionService {
 
                 if ("payment_success".equalsIgnoreCase(eventType)) {
 
-                    // Determine channel: card tokenization delivers tokenKey at data.tokenizedCardData.tokenKey
+                    // Determine channel: card tokenization delivers tokenKey at
+                    // data.tokenizedCardData.tokenKey
                     Map<String, Object> tokenizedCardData = data.get("tokenizedCardData") instanceof Map
-                            ? (Map<String, Object>) data.get("tokenizedCardData") : null;
+                            ? (Map<String, Object>) data.get("tokenizedCardData")
+                            : null;
                     String tokenKey = tokenizedCardData != null && tokenizedCardData.get("tokenKey") != null
-                            ? tokenizedCardData.get("tokenKey").toString() : null;
+                            ? tokenizedCardData.get("tokenKey").toString()
+                            : null;
 
                     if (tokenKey != null) {
                         // CARD PAYMENT — authoritative tokenKey from HMAC-verified webhook
-                        // requestId maps to our orderReference (stored as nombaReference on the subscription)
+                        // requestId maps to our orderReference (stored as nombaReference on the
+                        // subscription)
                         String orderReference = (String) payloadMap.get("requestId");
-                        System.out.println("[WebhookProcessor] Card payment + tokenKey detected. orderRef=" + orderReference + " amount=" + amount);
+                        System.out.println("[WebhookProcessor] Card payment + tokenKey detected. orderRef="
+                                + orderReference + " amount=" + amount);
                         if (orderReference != null && amount != null) {
                             processCardPaymentSuccess(orderReference, tokenKey, amount, transactionId);
                         } else {
@@ -578,7 +608,8 @@ public class SubscriptionService {
                     } else if (transaction != null && transaction.get("aliasAccountNumber") != null) {
                         // BANK TRANSFER — virtual account credit identified by aliasAccountNumber
                         String aliasAccountNumber = transaction.get("aliasAccountNumber").toString();
-                        System.out.println("[WebhookProcessor] Bank transfer. aliasAccountNumber=" + aliasAccountNumber + " amount=" + amount);
+                        System.out.println("[WebhookProcessor] Bank transfer. aliasAccountNumber=" + aliasAccountNumber
+                                + " amount=" + amount);
                         if (amount != null) {
                             processVirtualAccountPayment(aliasAccountNumber, amount, transactionId);
                         } else {
@@ -586,8 +617,9 @@ public class SubscriptionService {
                         }
 
                     } else {
-                        System.out.println("[WebhookProcessor] payment_success but channel unclear. data keys=" + data.keySet()
-                            + " transaction keys=" + (transaction != null ? transaction.keySet() : "null"));
+                        System.out.println(
+                                "[WebhookProcessor] payment_success but channel unclear. data keys=" + data.keySet()
+                                        + " transaction keys=" + (transaction != null ? transaction.keySet() : "null"));
                     }
 
                 } else if ("payment_failed".equalsIgnoreCase(eventType)) {
@@ -634,7 +666,8 @@ public class SubscriptionService {
                 final Subscription subscription = foundSubscription;
                 Customer customer = customerRepository.findById(subscription.getCustomerId()).orElse(null);
                 if (customer != null) {
-                    // Only update tokenKey if we actually have one — do not null-out an existing vault entry
+                    // Only update tokenKey if we actually have one — do not null-out an existing
+                    // vault entry
                     if (tokenKey != null && !tokenKey.isBlank() && !"N/A".equals(tokenKey)) {
                         customer.setNombaTokenKey(tokenKey);
                         customerRepository.save(customer);
@@ -965,7 +998,8 @@ public class SubscriptionService {
                     subscriptionRepository.save(sub);
 
                     resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
-                            "bank_transfer (Plan Upgrade pending checkout)", "PENDING", "WEMA Bank (Nomba Sandbox)", sub.getVirtualAccountNumber());
+                            "bank_transfer (Plan Upgrade pending checkout)", "PENDING", "WEMA Bank (Nomba Sandbox)",
+                            sub.getVirtualAccountNumber());
                 } else {
                     throw new IllegalStateException(
                             "Failed to generate checkout order for plan upgrade: " + checkoutResult.get("message"));
@@ -1099,9 +1133,11 @@ public class SubscriptionService {
                     "message", "Subscription is already active.");
         }
 
-        // nombaReference is the orderReference we passed to Nomba when creating the checkout order
+        // nombaReference is the orderReference we passed to Nomba when creating the
+        // checkout order
         String orderReference = subscription.getNombaReference();
-        System.out.println("[VerifyPayment] Querying Nomba for subscription=" + subscriptionId + " orderRef=" + orderReference);
+        System.out.println(
+                "[VerifyPayment] Querying Nomba for subscription=" + subscriptionId + " orderRef=" + orderReference);
 
         // Use /v1/transactions/accounts/single — works in BOTH sandbox and production
         // (unlike /v1/checkout/transaction which is production-only)
@@ -1109,7 +1145,8 @@ public class SubscriptionService {
 
         if (txResponse == null || !"00".equals(txResponse.get("code"))) {
             String description = txResponse != null && txResponse.get("description") != null
-                    ? txResponse.get("description").toString() : "No response from Nomba";
+                    ? txResponse.get("description").toString()
+                    : "No response from Nomba";
             System.out.println("[VerifyPayment] Transaction not found or API error: " + description);
             return Map.of(
                     "success", false,
@@ -1139,7 +1176,8 @@ public class SubscriptionService {
                     "nombaResponse", txResponse);
         }
 
-        // Payment confirmed as SUCCESS — extract amount (Nomba returns NGN decimal, e.g. "202.8")
+        // Payment confirmed as SUCCESS — extract amount (Nomba returns NGN decimal,
+        // e.g. "202.8")
         BigDecimal amount = BigDecimal.ZERO;
         if (data.get("amount") != null) {
             try {
@@ -1153,8 +1191,10 @@ public class SubscriptionService {
         String transactionId = data.get("id") != null ? data.get("id").toString() : orderReference;
 
         // NOTE: /v1/transactions/accounts/single does NOT return tokenKey.
-        // tokenKey will be delivered by the async payment_success webhook and stored then.
-        // Passing null here is intentional — processCardPaymentSuccess guards against overwriting an existing key.
+        // tokenKey will be delivered by the async payment_success webhook and stored
+        // then.
+        // Passing null here is intentional — processCardPaymentSuccess guards against
+        // overwriting an existing key.
         System.out.println("[VerifyPayment] SUCCESS confirmed. Activating subscription. amount=" + amount
                 + " transactionId=" + transactionId + " (tokenKey will arrive via webhook)");
         processCardPaymentSuccess(orderReference, null, amount, transactionId);
@@ -1162,7 +1202,8 @@ public class SubscriptionService {
         return Map.of(
                 "success", true,
                 "status", "ACTIVE",
-                "message", "Payment verified with Nomba. Subscription activated. Card token will be stored when webhook arrives.",
+                "message",
+                "Payment verified with Nomba. Subscription activated. Card token will be stored when webhook arrives.",
                 "orderReference", orderReference,
                 "transactionId", transactionId,
                 "amount", amount.toPlainString(),
@@ -1170,9 +1211,11 @@ public class SubscriptionService {
     }
 
     /**
-     * Public verification method — called by the checkout callback page (no auth required).
+     * Public verification method — called by the checkout callback page (no auth
+     * required).
      * Looks up the subscription by orderReference (the UUID we passed to Nomba),
-     * verifies payment status with Nomba, activates if successful, fires the merchant webhook,
+     * verifies payment status with Nomba, activates if successful, fires the
+     * merchant webhook,
      * and returns the redirect URL + app/plan details for the frontend to use.
      */
     @Transactional
@@ -1184,7 +1227,8 @@ public class SubscriptionService {
 
         System.out.println("[PublicVerify] Looking up subscription for orderReference=" + orderReference);
 
-        // The orderReference IS the subscription UUID (we set sub.id = orderReference in createSubscription)
+        // The orderReference IS the subscription UUID (we set sub.id = orderReference
+        // in createSubscription)
         Subscription subscription = null;
         try {
             UUID subId = UUID.fromString(orderReference);
@@ -1201,7 +1245,8 @@ public class SubscriptionService {
             return Map.of("success", false, "message", "Subscription not found for this order reference.");
         }
 
-        // Set request context so downstream methods (processCardPaymentSuccess) work correctly
+        // Set request context so downstream methods (processCardPaymentSuccess) work
+        // correctly
         com.yourara.arafi.security.RequestContext.setContext(subscription.getAppId(), subscription.getMode());
 
         // Resolve app and plan details for the frontend receipt
@@ -1215,7 +1260,8 @@ public class SubscriptionService {
         // If already active, return immediately (idempotent)
         if ("ACTIVE".equalsIgnoreCase(subscription.getStatus())) {
             System.out.println("[PublicVerify] Subscription already ACTIVE.");
-            // Resolve redirectUrl: subscription override > app default > null (fallback receipt)
+            // Resolve redirectUrl: subscription override > app default > null (fallback
+            // receipt)
             String redirectUrl = subscription.getRedirectUrl();
             if ((redirectUrl == null || redirectUrl.isBlank()) && app != null) {
                 redirectUrl = app.getRedirectUrl();
@@ -1232,9 +1278,12 @@ public class SubscriptionService {
             return result;
         }
 
-        // If the subscription is for a virtual bank account transfer, we do not query the checkout order endpoint
-        // (as it is not a card checkout order, and Nomba sandbox mock-responds SUCCESS for order query).
-        // Instead, we simply return the current DB status (which gets activated via webhook or sandbox simulator).
+        // If the subscription is for a virtual bank account transfer, we do not query
+        // the checkout order endpoint
+        // (as it is not a card checkout order, and Nomba sandbox mock-responds SUCCESS
+        // for order query).
+        // Instead, we simply return the current DB status (which gets activated via
+        // webhook or sandbox simulator).
         if (subscription.getVirtualAccountNumber() != null && !subscription.getVirtualAccountNumber().isBlank()) {
             java.util.HashMap<String, Object> result = new java.util.HashMap<>();
             result.put("success", false);
@@ -1254,7 +1303,8 @@ public class SubscriptionService {
 
         if (txResponse == null || !"00".equals(txResponse.get("code"))) {
             String description = txResponse != null && txResponse.get("description") != null
-                    ? txResponse.get("description").toString() : "No response from Nomba";
+                    ? txResponse.get("description").toString()
+                    : "No response from Nomba";
             System.out.println("[PublicVerify] Nomba lookup failed: " + description);
             java.util.HashMap<String, Object> result = new java.util.HashMap<>();
             result.put("success", false);
@@ -1307,7 +1357,8 @@ public class SubscriptionService {
         }
         String transactionId = data.get("id") != null ? data.get("id").toString() : orderReference;
 
-        System.out.println("[PublicVerify] SUCCESS. Activating subscription. amount=" + amount + " txId=" + transactionId);
+        System.out.println(
+                "[PublicVerify] SUCCESS. Activating subscription. amount=" + amount + " txId=" + transactionId);
         processCardPaymentSuccess(orderReference, null, amount, transactionId);
 
         // Resolve redirectUrl: subscription override > app default > null
@@ -1330,7 +1381,8 @@ public class SubscriptionService {
     }
 
     /**
-     * Simulates a bank transfer payment. Directly invokes processVirtualAccountPayment with a mock transaction ID.
+     * Simulates a bank transfer payment. Directly invokes
+     * processVirtualAccountPayment with a mock transaction ID.
      */
     @Transactional
     public void simulateVirtualAccountTransfer(String virtualAccountNumber, BigDecimal amount) {
@@ -1361,7 +1413,8 @@ public class SubscriptionService {
         result.put("planName", planName);
         result.put("baseAmount", baseAmount);
         result.put("finalAmount", finalAmount);
-        result.put("discountAmount", BigDecimal.valueOf(discountAmountKobo).divide(BigDecimal.valueOf(100)).toPlainString());
+        result.put("discountAmount",
+                BigDecimal.valueOf(discountAmountKobo).divide(BigDecimal.valueOf(100)).toPlainString());
         result.put("appliedCouponCode", sub.getAppliedCouponCode());
         result.put("interval", plan != null ? plan.getBillingInterval() : "monthly");
         result.put("customerEmail", customer != null ? customer.getEmail() : "N/A");
@@ -1434,7 +1487,8 @@ public class SubscriptionService {
             if (virtualAccountNumber == null || virtualAccountNumber.isBlank()) {
                 String accountRef = "arafi_vban_" + customer.getId().toString();
                 String accountName = "ARAFI * " + customer.getEmail();
-                Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName, amountDecimal);
+                Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName,
+                        amountDecimal);
 
                 if ("success".equals(accountDetails.get("status"))) {
                     virtualAccountNumber = accountDetails.get("bankAccountNumber");
@@ -1446,7 +1500,9 @@ public class SubscriptionService {
                     throw new IllegalStateException("Nomba virtual account error: " + accountDetails.get("message"));
                 }
             } else {
-                log.info("[SubscriptionService] Reusing existing virtual account number from database: {} for customer: {} in public checkout.", virtualAccountNumber, customer.getEmail());
+                log.info(
+                        "[SubscriptionService] Reusing existing virtual account number from database: {} for customer: {} in public checkout.",
+                        virtualAccountNumber, customer.getEmail());
             }
 
             sub.setVirtualAccountNumber(virtualAccountNumber);
@@ -1458,8 +1514,7 @@ public class SubscriptionService {
             return Map.of(
                     "bankAccountNumber", virtualAccountNumber,
                     "bankName", bankName,
-                    "bankAccountName", "ARAFI * " + customer.getEmail()
-            );
+                    "bankAccountName", "ARAFI * " + customer.getEmail());
         } finally {
             com.yourara.arafi.security.RequestContext.clear();
         }
