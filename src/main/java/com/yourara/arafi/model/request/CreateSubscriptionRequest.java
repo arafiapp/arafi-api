@@ -21,4 +21,7 @@ public class CreateSubscriptionRequest {
 
     @JsonProperty("redirect_url")
     private String redirectUrl;
+
+    @JsonProperty("coupon_code")
+    private String couponCode;
 }
