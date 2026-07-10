@@ -63,6 +63,21 @@ public class SubscriptionService {
         String mode = com.yourara.arafi.security.RequestContext.getMode() != null
                 ? com.yourara.arafi.security.RequestContext.getMode()
                 : "test";
+
+        // Check if customer already exists in workspace
+        List<Customer> existing = customerRepository.findByAppIdAndEmail(appId, request.getEmail());
+        if (!existing.isEmpty()) {
+            Customer customer = existing.get(0);
+            return CustomerResponse.builder()
+                    .id(customer.getId())
+                    .appId(customer.getAppId())
+                    .name(customer.getName())
+                    .email(customer.getEmail())
+                    .externalRef(customer.getExternalRef())
+                    .createdAt(customer.getCreatedAt())
+                    .build();
+        }
+
         Customer customer = Customer.builder()
                 .appId(appId)
                 .name(request.getName())
