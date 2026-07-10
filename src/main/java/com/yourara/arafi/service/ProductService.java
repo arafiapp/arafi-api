@@ -27,8 +27,8 @@ public class ProductService {
     private final NombaClientService nombaClientService;
     private final ResendEmailService resendEmailService;
 
-    // We can fetch this from environment or default
-    private final String nombaCallbackUrl = "https://mock.arafi.com/webhook-fallback";
+    @org.springframework.beans.factory.annotation.Value("${nomba.callback.url:https://arafi-platform.vercel.app/checkout/callback}")
+    private String nombaCallbackUrl;
 
     @Transactional
     public Product createProduct(UUID appId, CreateProductRequest request) {
