@@ -108,16 +108,19 @@ public class AppWorkspaceController {
     )
     public ResponseEntity<?> updateWorkspaceWebhook(
             @PathVariable UUID appId,
-            @RequestParam(required = false) String url,
-            @RequestParam(required = false) String redirectUrl,
-            @RequestParam(defaultValue = "false") boolean rotateSecret) {
+            @RequestBody com.yourara.arafi.model.request.UpdateWebhookRequest request) {
         try {
             UUID userId = RequestContext.getUserId();
             if (userId == null) {
                 return ResponseEntity.status(401).body(new com.yourara.arafi.model.response.ErrorResponse("Unauthorized user context."));
             }
 
-            return ResponseEntity.ok(workspaceService.updateWebhookSettings(userId, appId, url, redirectUrl, rotateSecret));
+            return ResponseEntity.ok(workspaceService.updateWebhookSettings(
+                    userId, 
+                    appId, 
+                    request.getWebhookUrl(), 
+                    request.getRedirectUrl(), 
+                    request.isRotateSecret()));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(new com.yourara.arafi.model.response.ErrorResponse(e.getMessage()));
         }
