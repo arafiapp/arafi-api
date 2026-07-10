@@ -73,16 +73,19 @@ public class ProductService {
         }
 
         // 1. Resolve or create customer profile
-        Customer customer = customerRepository.findByAppIdAndEmail(appId, request.getCustomerEmail())
-                .orElseGet(() -> {
-                    Customer newCust = Customer.builder()
-                            .appId(appId)
-                            .email(request.getCustomerEmail())
-                            .name(request.getCustomerName() != null ? request.getCustomerName() : "")
-                            .externalRef("auto_product_" + System.currentTimeMillis())
-                            .build();
-                    return customerRepository.save(newCust);
-                });
+        List<Customer> customers = customerRepository.findByAppIdAndEmail(appId, request.getCustomerEmail());
+        Customer customer;
+        if (!customers.isEmpty()) {
+            customer = customers.get(0);
+        } else {
+            Customer newCust = Customer.builder()
+                    .appId(appId)
+                    .email(request.getCustomerEmail())
+                    .name(request.getCustomerName() != null ? request.getCustomerName() : "")
+                    .externalRef("auto_product_" + System.currentTimeMillis())
+                    .build();
+            customer = customerRepository.save(newCust);
+        }
 
         if (request.getCustomerName() != null && !request.getCustomerName().isBlank() &&
                 (customer.getName() == null || customer.getName().isBlank())) {
