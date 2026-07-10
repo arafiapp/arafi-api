@@ -19,12 +19,16 @@ import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 
+import com.yourara.arafi.model.App;
+import com.yourara.arafi.repository.AppRepository;
+
 @Component
 @RequiredArgsConstructor
 public class SecurityInterceptorFilter extends OncePerRequestFilter {
 
     private final ApiKeyRepository apiKeyRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AppRepository appRepository;
 
     @Value("${arafi.jwt.secret}")
     private String jwtSecret;
@@ -92,6 +96,19 @@ public class SecurityInterceptorFilter extends OncePerRequestFilter {
 
                 UUID userId = UUID.fromString(claims.getSubject());
                 RequestContext.setUserId(userId);
+
+                String workspaceHeader = request.getHeader("X-Workspace-Id");
+                if (workspaceHeader != null && !workspaceHeader.trim().isEmpty()) {
+                    try {
+                        UUID workspaceId = UUID.fromString(workspaceHeader.trim());
+                        App app = appRepository.findById(workspaceId).orElse(null);
+                        if (app != null && app.getUser().getId().equals(userId)) {
+                            RequestContext.setContext(workspaceId, "test");
+                        }
+                    } catch (IllegalArgumentException e) {
+                        // Ignore malformed UUID strings
+                    }
+                }
 
                 org.springframework.security.authentication.UsernamePasswordAuthenticationToken authentication =
                         new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
