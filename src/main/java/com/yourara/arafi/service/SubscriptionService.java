@@ -1275,6 +1275,40 @@ public class SubscriptionService {
         }
 
         if (subscription == null) {
+            // Check if it exists as a product transaction reference
+            try {
+                UUID txId = UUID.fromString(orderReference);
+                Optional<com.yourara.arafi.model.ProductTransaction> optPtx = productTransactionRepository.findById(txId);
+                if (optPtx.isPresent()) {
+                    com.yourara.arafi.model.ProductTransaction ptx = optPtx.get();
+                    System.out.println("[PublicVerify] Found product transaction instead of subscription for reference=" + orderReference);
+                    
+                    // Run verification logic for product
+                    Map<String, String> verificationResult = productService.publicVerifyProductCardCheckout(orderReference);
+                    boolean isSuccess = "SUCCESS".equalsIgnoreCase(verificationResult.get("status"));
+                    
+                    if (isSuccess) {
+                        return Map.of(
+                            "success", true,
+                            "status", "ACTIVE",
+                            "appName", "Arafi Product Store",
+                            "planName", "Product Purchase",
+                            "amount", ptx.getAmountKobo() != null ? BigDecimal.valueOf(ptx.getAmountKobo()).divide(BigDecimal.valueOf(100)).toPlainString() : "0.00",
+                            "orderReference", orderReference,
+                            "redirectUrl", verificationResult.get("redirectUrl") != null ? verificationResult.get("redirectUrl") : "",
+                            "message", "Payment successfully verified."
+                        );
+                    } else {
+                        return Map.of(
+                            "success", false,
+                            "message", "Your product payment is still pending or failed."
+                        );
+                    }
+                }
+            } catch (Exception e) {
+                System.out.println("[PublicVerify] Error in product transaction verification fallback: " + e.getMessage());
+            }
+
             System.out.println("[PublicVerify] No subscription found for orderReference=" + orderReference);
             return Map.of("success", false, "message", "Subscription not found for this order reference.");
         }

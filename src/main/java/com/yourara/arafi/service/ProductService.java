@@ -27,7 +27,7 @@ public class ProductService {
     private final NombaClientService nombaClientService;
     private final ResendEmailService resendEmailService;
 
-    @org.springframework.beans.factory.annotation.Value("${nomba.callback.url:https://arafi-platform.vercel.app/checkout/callback}")
+    @org.springframework.beans.factory.annotation.Value("${nomba.callback.url:https://arafi.yourara.com/checkout/callback}")
     private String nombaCallbackUrl;
 
     @Transactional
@@ -62,7 +62,7 @@ public class ProductService {
 
     @Transactional
     public Map<String, String> createProductCheckout(UUID appId, UUID productId, CreateProductCheckoutRequest request) {
-        log.info("[ProductService] Creating product checkout: appId={}, productId={}, customerEmail={}", 
+        log.info("[ProductService] Creating product checkout: appId={}, productId={}, customerEmail={}",
                 appId, productId, request.getCustomerEmail());
 
         Product product = productRepository.findById(productId)
@@ -84,7 +84,7 @@ public class ProductService {
                     return customerRepository.save(newCust);
                 });
 
-        if (request.getCustomerName() != null && !request.getCustomerName().isBlank() && 
+        if (request.getCustomerName() != null && !request.getCustomerName().isBlank() &&
                 (customer.getName() == null || customer.getName().isBlank())) {
             customer.setName(request.getCustomerName());
             customerRepository.save(customer);
@@ -116,14 +116,20 @@ public class ProductService {
 
         try {
             if ("CARD".equalsIgnoreCase(paymentMethod)) {
+                String redirectCallbackUrl = nombaCallbackUrl;
+                if (redirectCallbackUrl != null) {
+                    redirectCallbackUrl = redirectCallbackUrl.contains("?")
+                            ? redirectCallbackUrl + "&type=product"
+                            : redirectCallbackUrl + "?type=product";
+                }
+
                 // Call Nomba checkout order
                 Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
                         nombaRef,
                         product.getPriceKobo(),
                         customer.getEmail(),
-                        nombaCallbackUrl,
-                        List.of("Card")
-                );
+                        redirectCallbackUrl,
+                        List.of("Card"));
 
                 if ("success".equals(checkoutResult.get("status"))) {
                     checkoutUrl = checkoutResult.get("checkoutLink");
@@ -140,8 +146,7 @@ public class ProductService {
                 Map<String, String> accountDetails = nombaClientService.createVirtualAccount(
                         accountRef,
                         accountName,
-                        amountDecimal
-                );
+                        amountDecimal);
 
                 if ("success".equals(accountDetails.get("status"))) {
                     virtualAccountNumber = accountDetails.get("bankAccountNumber");
@@ -150,7 +155,8 @@ public class ProductService {
                             ? "ARAFI * " + customer.getName()
                             : "ARAFI * " + customer.getEmail();
                 } else {
-                    throw new IllegalStateException("Nomba virtual account API failed: " + accountDetails.get("message"));
+                    throw new IllegalStateException(
+                            "Nomba virtual account API failed: " + accountDetails.get("message"));
                 }
 
                 // Redirect link to our Arafi frontend checkout page
@@ -168,8 +174,7 @@ public class ProductService {
 
             return Map.of(
                     "checkoutId", ptx.getId().toString(),
-                    "checkoutUrl", checkoutUrl
-            );
+                    "checkoutUrl", checkoutUrl);
 
         } finally {
             com.yourara.arafi.security.RequestContext.clear();
@@ -216,8 +221,7 @@ public class ProductService {
             return Map.of(
                     "bankAccountNumber", ptx.getVirtualAccountNumber(),
                     "bankName", ptx.getBankName() != null ? ptx.getBankName() : "Nomba Bank",
-                    "bankAccountName", ptx.getBankAccountName() != null ? ptx.getBankAccountName() : "ARAFI"
-            );
+                    "bankAccountName", ptx.getBankAccountName() != null ? ptx.getBankAccountName() : "ARAFI");
         }
 
         Customer customer = customerRepository.findById(ptx.getCustomerId())
@@ -233,7 +237,8 @@ public class ProductService {
                     ? customer.getName()
                     : "ARAFI " + customer.getEmail();
 
-            Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName, amountDecimal);
+            Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName,
+                    amountDecimal);
 
             if ("success".equals(accountDetails.get("status"))) {
                 String virtualAccountNumber = accountDetails.get("bankAccountNumber");
@@ -250,8 +255,7 @@ public class ProductService {
                 return Map.of(
                         "bankAccountNumber", virtualAccountNumber,
                         "bankName", bankName,
-                        "bankAccountName", bankAccountName
-                );
+                        "bankAccountName", bankAccountName);
             } else {
                 throw new IllegalStateException("Nomba virtual account error: " + accountDetails.get("message"));
             }
@@ -305,7 +309,8 @@ public class ProductService {
                             amount, "card", "SUCCESS", "Nomba Checkout Gateway", "N/A");
                 }
 
-                return Map.of("status", "SUCCESS", "redirectUrl", ptx.getRedirectUrl() != null ? ptx.getRedirectUrl() : "");
+                return Map.of("status", "SUCCESS", "redirectUrl",
+                        ptx.getRedirectUrl() != null ? ptx.getRedirectUrl() : "");
             } else {
                 return Map.of("status", ptx.getStatus(), "redirectUrl", "");
             }
@@ -315,9 +320,12 @@ public class ProductService {
     }
 
     @Transactional
-    public void processProductBankTransferPayment(String virtualAccountNumber, BigDecimal amount, String transactionId) {
-        log.info("[ProductService] Processing virtual account transfer credit: VBAN={}, amount={}", virtualAccountNumber, amount);
-        Optional<ProductTransaction> optTx = productTransactionRepository.findByVirtualAccountNumber(virtualAccountNumber);
+    public void processProductBankTransferPayment(String virtualAccountNumber, BigDecimal amount,
+            String transactionId) {
+        log.info("[ProductService] Processing virtual account transfer credit: VBAN={}, amount={}",
+                virtualAccountNumber, amount);
+        Optional<ProductTransaction> optTx = productTransactionRepository
+                .findByVirtualAccountNumber(virtualAccountNumber);
         if (optTx.isEmpty()) {
             log.warn("[ProductService] No pending product transaction matches VBAN: {}", virtualAccountNumber);
             return;
@@ -384,8 +392,7 @@ public class ProductService {
             String eventType = "product.payment.success";
             Map<String, Object> payload = Map.of(
                     "event", eventType,
-                    "data", dataMap
-            );
+                    "data", dataMap);
 
             WebhookDispatch dispatch = WebhookDispatch.builder()
                     .appId(pt.getAppId())
@@ -398,7 +405,8 @@ public class ProductService {
                     .build();
 
             webhookDispatchRepository.save(dispatch);
-            log.info("[ProductService] Queued merchant webhook product.payment.success callback to outbox for app: {}", pt.getAppId());
+            log.info("[ProductService] Queued merchant webhook product.payment.success callback to outbox for app: {}",
+                    pt.getAppId());
         } catch (Exception e) {
             log.error("[ProductService] Failed to queue product callback webhook: {}", e.getMessage());
         }
