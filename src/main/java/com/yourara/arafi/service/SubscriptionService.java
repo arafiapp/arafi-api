@@ -1278,7 +1278,7 @@ public class SubscriptionService {
             // Check if it exists as a product transaction reference
             try {
                 UUID txId = UUID.fromString(orderReference);
-                Optional<com.yourara.arafi.model.ProductTransaction> optPtx = productTransactionRepository.findById(txId);
+                java.util.Optional<com.yourara.arafi.model.ProductTransaction> optPtx = productTransactionRepository.findById(txId);
                 if (optPtx.isPresent()) {
                     com.yourara.arafi.model.ProductTransaction ptx = optPtx.get();
                     System.out.println("[PublicVerify] Found product transaction instead of subscription for reference=" + orderReference);
