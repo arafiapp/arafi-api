@@ -103,7 +103,9 @@ public class ProductService {
                 .customerId(customer.getId())
                 .amountKobo(product.getPriceKobo())
                 .status("PENDING")
-                .paymentMethod(request.getPaymentMethod())
+                .paymentMethod(request.getPaymentMethod() != null && !request.getPaymentMethod().isBlank()
+                        ? request.getPaymentMethod()
+                        : "PORTAL")
                 .redirectUrl(request.getRedirectUrl())
                 .build();
         ptx = productTransactionRepository.save(ptx);
@@ -256,6 +258,7 @@ public class ProductService {
                 ptx.setVirtualAccountNumber(virtualAccountNumber);
                 ptx.setBankName(bankName);
                 ptx.setBankAccountName(bankAccountName);
+                ptx.setPaymentMethod("BANK_TRANSFER");
                 productTransactionRepository.save(ptx);
 
                 return Map.of(
@@ -264,6 +267,49 @@ public class ProductService {
                         "bankAccountName", bankAccountName);
             } else {
                 throw new IllegalStateException("Nomba virtual account error: " + accountDetails.get("message"));
+            }
+        } finally {
+            com.yourara.arafi.security.RequestContext.clear();
+        }
+    }
+
+    @Transactional
+    public Map<String, String> publicGenerateCardCheckoutUrl(UUID checkoutId) {
+        ProductTransaction ptx = productTransactionRepository.findById(checkoutId)
+                .orElseThrow(() -> new IllegalArgumentException("Product checkout transaction context not found."));
+
+        if ("SUCCESS".equalsIgnoreCase(ptx.getStatus())) {
+            throw new IllegalStateException("This transaction has already been completed.");
+        }
+
+        Customer customer = customerRepository.findById(ptx.getCustomerId())
+                .orElseThrow(() -> new IllegalStateException("Customer profile not found."));
+
+        com.yourara.arafi.security.RequestContext.setContext(ptx.getAppId(), "TEST");
+
+        try {
+            String redirectCallbackUrl = nombaCallbackUrl;
+            if (redirectCallbackUrl != null) {
+                redirectCallbackUrl = redirectCallbackUrl.contains("?")
+                        ? redirectCallbackUrl + "&type=product"
+                        : redirectCallbackUrl + "?type=product";
+            }
+
+            Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
+                    ptx.getId().toString(),
+                    ptx.getAmountKobo(),
+                    customer.getEmail(),
+                    redirectCallbackUrl,
+                    List.of("Card"));
+
+            if ("success".equals(checkoutResult.get("status"))) {
+                ptx.setNombaReference(ptx.getId().toString());
+                ptx.setCheckoutUrl(checkoutResult.get("checkoutLink"));
+                ptx.setPaymentMethod("CARD");
+                productTransactionRepository.save(ptx);
+                return Map.of("checkoutLink", checkoutResult.get("checkoutLink"));
+            } else {
+                throw new IllegalStateException("Nomba checkout API failed: " + checkoutResult.get("message"));
             }
         } finally {
             com.yourara.arafi.security.RequestContext.clear();

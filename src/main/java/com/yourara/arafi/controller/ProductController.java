@@ -120,6 +120,20 @@ public class ProductController {
         }
     }
 
+    @PostMapping("/public/checkout/{checkoutId}/card-checkout")
+    @Operation(
+            summary = "Generate Nomba card checkout URL for product",
+            description = "Creates a Nomba checkout restricted to cards for a product transaction."
+    )
+    public ResponseEntity<?> publicGenerateProductCardCheckout(@PathVariable UUID checkoutId) {
+        try {
+            Map<String, String> details = productService.publicGenerateCardCheckoutUrl(checkoutId);
+            return ResponseEntity.ok(details);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
     @PostMapping("/public/checkout/{checkoutId}/bank-transfer")
     @Operation(
             summary = "Allocate public virtual account bank details",
