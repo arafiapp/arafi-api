@@ -118,7 +118,10 @@ public class ProductService {
         com.yourara.arafi.security.RequestContext.setContext(appId, "TEST"); // Default to context app mode
 
         try {
-            if ("CARD".equalsIgnoreCase(paymentMethod)) {
+            if (paymentMethod == null || paymentMethod.isBlank()) {
+                // Redirect link to our Arafi frontend checkout page
+                checkoutUrl = "https://arafi-platform.vercel.app/checkout/" + ptx.getId().toString() + "?type=product";
+            } else if ("CARD".equalsIgnoreCase(paymentMethod)) {
                 String redirectCallbackUrl = nombaCallbackUrl;
                 if (redirectCallbackUrl != null) {
                     redirectCallbackUrl = redirectCallbackUrl.contains("?")
